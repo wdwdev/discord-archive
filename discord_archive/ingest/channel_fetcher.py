@@ -145,8 +145,12 @@ async def _fetch_text_channel_threads(
             if not result.get("has_more", False) or not threads:
                 break
             before = threads[-1]["thread_metadata"]["archive_timestamp"]
-    except Exception:
-        pass  # May not have permission
+    except Exception as e:
+        logger.debug(
+            "Failed to fetch public archived threads for channel %s: %s",
+            channel_id,
+            e,
+        )
 
     # Private archived threads (requires MANAGE_THREADS + READ_MESSAGE_HISTORY)
     if can_manage_threads(channel_perms) and can_read_history(channel_perms):
@@ -161,8 +165,12 @@ async def _fetch_text_channel_threads(
                 if not result.get("has_more", False) or not threads:
                     break
                 before = threads[-1]["thread_metadata"]["archive_timestamp"]
-        except Exception:
-            pass  # May not have permission
+        except Exception as e:
+            logger.debug(
+                "Failed to fetch private archived threads for channel %s: %s",
+                channel_id,
+                e,
+            )
 
 
 async def _fetch_forum_channel_threads(
@@ -180,5 +188,9 @@ async def _fetch_forum_channel_threads(
             if not result.get("has_more", False) or not threads:
                 break
             before = threads[-1]["thread_metadata"]["archive_timestamp"]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(
+            "Failed to fetch archived threads for forum/media channel %s: %s",
+            channel_id,
+            e,
+        )
