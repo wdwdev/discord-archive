@@ -176,7 +176,7 @@ class DiscordClient:
     ) -> list[dict[str, Any]]:
         """Fetch guild members (paginated)."""
         params: dict[str, Any] = {"limit": limit}
-        if after:
+        if after is not None:
             params["after"] = after
         return await self._request("GET", f"/guilds/{guild_id}/members", params=params)
 
@@ -193,7 +193,7 @@ class DiscordClient:
     ) -> dict[str, Any]:
         """Fetch public archived threads in a channel."""
         params: dict[str, Any] = {"limit": limit}
-        if before:
+        if before is not None:
             params["before"] = before
         return await self._request(
             "GET", f"/channels/{channel_id}/threads/archived/public", params=params
@@ -204,7 +204,7 @@ class DiscordClient:
     ) -> dict[str, Any]:
         """Fetch private archived threads in a channel (requires permissions)."""
         params: dict[str, Any] = {"limit": limit}
-        if before:
+        if before is not None:
             params["before"] = before
         return await self._request(
             "GET", f"/channels/{channel_id}/threads/archived/private", params=params
@@ -243,11 +243,11 @@ class DiscordClient:
             List of message objects, ordered by ID descending (newest first)
         """
         params: dict[str, Any] = {"limit": min(limit, 100)}
-        if before:
+        if before is not None:
             params["before"] = before
-        if after:
+        if after is not None:
             params["after"] = after
-        if around:
+        if around is not None:
             params["around"] = around
         return await self._request(
             "GET", f"/channels/{channel_id}/messages", params=params
