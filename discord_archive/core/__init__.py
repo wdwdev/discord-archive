@@ -22,7 +22,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from discord_archive.db.engine import get_async_session, get_engine
+from discord_archive.db.engine import dispose_engines, get_async_session, get_engine
 from discord_archive.db.models import Base
 
 if TYPE_CHECKING:
@@ -79,10 +79,13 @@ class BaseOrchestrator(ABC):
         self.start_time = time.time()
 
         await self.init_db()
-        await self._run_pipeline(guild_id=guild_id, channel_id=channel_id)
+        try:
+            await self._run_pipeline(guild_id=guild_id, channel_id=channel_id)
 
-        elapsed = time.time() - self.start_time
-        self._log_summary(elapsed)
+            elapsed = time.time() - self.start_time
+            self._log_summary(elapsed)
+        finally:
+            await dispose_engines()
 
     @abstractmethod
     async def _run_pipeline(
