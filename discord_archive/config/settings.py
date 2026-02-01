@@ -86,6 +86,4 @@ def load_config(path: str | Path = "config.json") -> AppSettings:
 
     Deprecated: Use get_settings() or AppSettings.from_json() instead.
     """
-    # Clear cache when explicitly loading from a different path
-    get_settings.cache_clear()
     return AppSettings.from_json(path)
