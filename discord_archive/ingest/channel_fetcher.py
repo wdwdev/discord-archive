@@ -147,9 +147,7 @@ async def _fetch_text_channel_threads(
             before = threads[-1]["thread_metadata"]["archive_timestamp"]
     except Exception as e:
         logger.debug(
-            "Failed to fetch public archived threads for channel %s: %s",
-            channel_id,
-            e,
+            f"Failed to fetch public archived threads for channel {channel_id}: {e}"
         )
 
     # Private archived threads (requires MANAGE_THREADS + READ_MESSAGE_HISTORY)
@@ -167,9 +165,7 @@ async def _fetch_text_channel_threads(
                 before = threads[-1]["thread_metadata"]["archive_timestamp"]
         except Exception as e:
             logger.debug(
-                "Failed to fetch private archived threads for channel %s: %s",
-                channel_id,
-                e,
+                f"Failed to fetch private archived threads for channel {channel_id}: {e}"
             )
 
 
@@ -190,7 +186,5 @@ async def _fetch_forum_channel_threads(
             before = threads[-1]["thread_metadata"]["archive_timestamp"]
     except Exception as e:
         logger.debug(
-            "Failed to fetch archived threads for forum/media channel %s: %s",
-            channel_id,
-            e,
+            f"Failed to fetch archived threads for forum/media channel {channel_id}: {e}"
         )
