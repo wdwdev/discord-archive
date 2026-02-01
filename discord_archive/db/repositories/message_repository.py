@@ -77,28 +77,23 @@ async def bulk_upsert_users(session: AsyncSession, users: list[User]) -> None:
         for u in unique_users
     ]
 
-    stmt = (
-        pg_insert(User)
-        .values(values)
-        .on_conflict_do_update(
-            index_elements=["user_id"],
-            set_={
-                "username": pg_insert(User).excluded.username,
-                "discriminator": pg_insert(User).excluded.discriminator,
-                "global_name": pg_insert(User).excluded.global_name,
-                "avatar": pg_insert(User).excluded.avatar,
-                "avatar_decoration_data": pg_insert(
-                    User
-                ).excluded.avatar_decoration_data,
-                "banner": pg_insert(User).excluded.banner,
-                "accent_color": pg_insert(User).excluded.accent_color,
-                "bot": pg_insert(User).excluded.bot,
-                "system": pg_insert(User).excluded.system,
-                "public_flags": pg_insert(User).excluded.public_flags,
-                "premium_type": pg_insert(User).excluded.premium_type,
-                "raw": pg_insert(User).excluded.raw,
-            },
-        )
+    insert_stmt = pg_insert(User).values(values)
+    stmt = insert_stmt.on_conflict_do_update(
+        index_elements=["user_id"],
+        set_={
+            "username": insert_stmt.excluded.username,
+            "discriminator": insert_stmt.excluded.discriminator,
+            "global_name": insert_stmt.excluded.global_name,
+            "avatar": insert_stmt.excluded.avatar,
+            "avatar_decoration_data": insert_stmt.excluded.avatar_decoration_data,
+            "banner": insert_stmt.excluded.banner,
+            "accent_color": insert_stmt.excluded.accent_color,
+            "bot": insert_stmt.excluded.bot,
+            "system": insert_stmt.excluded.system,
+            "public_flags": insert_stmt.excluded.public_flags,
+            "premium_type": insert_stmt.excluded.premium_type,
+            "raw": insert_stmt.excluded.raw,
+        },
     )
     await session.execute(stmt)
 
