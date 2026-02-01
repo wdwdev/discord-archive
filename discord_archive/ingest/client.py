@@ -22,6 +22,7 @@ BASE_URL = "https://discord.com/api/v10"
 
 # Retry configuration
 MAX_RETRIES = 5
+MAX_RATE_LIMIT_RETRIES = 30  # Cap on consecutive 429 retries
 INITIAL_BACKOFF = 1.0  # seconds
 MAX_BACKOFF = 64.0  # seconds
 
@@ -89,6 +90,7 @@ class DiscordClient:
             raise RuntimeError("Client not initialized. Use async with.")
 
         backoff = INITIAL_BACKOFF
+        rate_limit_retries = 0
 
         for attempt in range(MAX_RETRIES + 1):
             try:
@@ -104,6 +106,9 @@ class DiscordClient:
 
                 # Rate limited - wait and retry (doesn't count as attempt)
                 if response.status_code == 429:
+                    rate_limit_retries += 1
+                    if rate_limit_retries > MAX_RATE_LIMIT_RETRIES:
+                        raise DiscordAPIError(429, "Max rate limit retries exceeded")
                     retry_after = float(response.headers.get("Retry-After", 1.0))
                     logger.rate_limit(retry_after)
                     await asyncio.sleep(retry_after)
