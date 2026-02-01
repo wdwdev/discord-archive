@@ -78,6 +78,9 @@ def compute_channel_permissions(
     # Find role overwrites (combine all role denies/allows)
     role_allow = 0
     role_deny = 0
+    member_allow = 0
+    member_deny = 0
+    has_member_overwrite = False
 
     for overwrite in channel_overwrites:
         overwrite_id = int(overwrite["id"])
@@ -96,20 +99,18 @@ def compute_channel_permissions(
                 role_allow |= allow
         elif overwrite_type == 1 and overwrite_id == user_id:
             # Member-specific overwrite - will be applied last
-            # Store for later
             member_deny = deny
             member_allow = allow
+            has_member_overwrite = True
 
     # Apply role overwrites (after @everyone)
     permissions &= ~role_deny
     permissions |= role_allow
 
-    # Apply member overwrites last (if they exist)
-    for overwrite in channel_overwrites:
-        if overwrite["type"] == 1 and int(overwrite["id"]) == user_id:
-            permissions &= ~int(overwrite.get("deny", 0) or 0)
-            permissions |= int(overwrite.get("allow", 0) or 0)
-            break
+    # Apply member overwrites last (highest priority)
+    if has_member_overwrite:
+        permissions &= ~member_deny
+        permissions |= member_allow
 
     return permissions
 
