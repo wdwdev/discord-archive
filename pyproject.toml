@@ -9,7 +9,7 @@ description = "A Discord archive tool with optional RAG pipeline."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "wdwdev"}
 ]
 dependencies = [
     # Core dependencies
