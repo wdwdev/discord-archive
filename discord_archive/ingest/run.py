@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from discord_archive.config.settings import AccountConfig, AppSettings, load_config
 from discord_archive.core import BaseOrchestrator
-from discord_archive.ingest.client import DiscordClient
+from discord_archive.ingest.client import DiscordAPIError, DiscordClient
 from discord_archive.ingest.guild_processor import process_guild
 from discord_archive.ingest.logger import logger
 
@@ -97,8 +97,10 @@ class IngestOrchestrator(BaseOrchestrator):
                         self.channels_processed += 1
                         self.messages_ingested += result.messages_ingested
                         return  # Found and processed
-                except Exception:
-                    continue  # Try next account
+                except DiscordAPIError as e:
+                    if e.status_code in (401, 403, 404):
+                        continue  # Try next account
+                    raise
 
         logger.warning(f"Could not find channel {channel_id} in any account")
 
