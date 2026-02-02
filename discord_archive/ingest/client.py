@@ -22,7 +22,6 @@ BASE_URL = "https://discord.com/api/v10"
 
 # Retry configuration
 MAX_RETRIES = 5
-MAX_RATE_LIMIT_RETRIES = 30  # Cap on consecutive 429 retries
 INITIAL_BACKOFF = 1.0  # seconds
 MAX_BACKOFF = 64.0  # seconds
 
@@ -34,14 +33,6 @@ class DiscordAPIError(Exception):
         self.status_code = status_code
         self.message = message
         super().__init__(f"Discord API error {status_code}: {message}")
-
-
-class DiscordRateLimitError(Exception):
-    """Raised when rate limited (for internal use)."""
-
-    def __init__(self, retry_after: float) -> None:
-        self.retry_after = retry_after
-        super().__init__(f"Rate limited, retry after {retry_after}s")
 
 
 @dataclass
@@ -90,9 +81,9 @@ class DiscordClient:
             raise RuntimeError("Client not initialized. Use async with.")
 
         backoff = INITIAL_BACKOFF
-        rate_limit_retries = 0
+        attempt = 0
 
-        for attempt in range(MAX_RETRIES + 1):
+        while attempt <= MAX_RETRIES:
             try:
                 response = await self._client.request(method, path, params=params)
 
@@ -106,13 +97,10 @@ class DiscordClient:
 
                 # Rate limited - wait and retry (doesn't count as attempt)
                 if response.status_code == 429:
-                    rate_limit_retries += 1
-                    if rate_limit_retries > MAX_RATE_LIMIT_RETRIES:
-                        raise DiscordAPIError(429, "Max rate limit retries exceeded")
                     retry_after = float(response.headers.get("Retry-After", 1.0))
                     logger.rate_limit(retry_after)
                     await asyncio.sleep(retry_after)
-                    continue  # Don't increment attempt counter
+                    continue
 
                 # Client errors - fail immediately
                 if response.status_code in (401, 403, 404):
@@ -134,6 +122,7 @@ class DiscordClient:
                         )
                         await asyncio.sleep(backoff)
                         backoff = min(backoff * 2, MAX_BACKOFF)
+                        attempt += 1
                         continue
                     raise DiscordAPIError(response.status_code, response.text)
 
@@ -145,6 +134,7 @@ class DiscordClient:
                     logger.retry(attempt + 1, MAX_RETRIES, backoff, "timeout")
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, MAX_BACKOFF)
+                    attempt += 1
                     continue
                 raise
 
@@ -153,6 +143,7 @@ class DiscordClient:
                     logger.retry(attempt + 1, MAX_RETRIES, backoff, str(e))
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, MAX_BACKOFF)
+                    attempt += 1
                     continue
                 raise
 

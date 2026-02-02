@@ -10,7 +10,6 @@ import pytest
 from discord_archive.ingest.client import (
     INITIAL_BACKOFF,
     MAX_BACKOFF,
-    MAX_RATE_LIMIT_RETRIES,
     MAX_RETRIES,
     DiscordAPIError,
     DiscordClient,
@@ -83,20 +82,21 @@ class TestRequest:
 
     @pytest.mark.asyncio
     @patch("discord_archive.ingest.client.asyncio.sleep", new_callable=AsyncMock)
-    async def test_429_exceeds_max_retries_raises(self, mock_sleep):
-        """When 429s persist, the outer for-loop eventually exhausts and
-        the fallback 'Max retries exceeded' error fires."""
+    async def test_429_does_not_consume_retry_attempts(self, mock_sleep):
+        """429s don't count against the retry budget; all MAX_RETRIES+1
+        attempts remain available for real errors."""
         client = _make_client()
-        rate_resp = _make_response(429, headers={"Retry-After": "1"})
-        client._client.request.return_value = rate_resp
+        rate_resp = _make_response(429, headers={"Retry-After": "0.5"})
+        ok_resp = _make_response(200, {"ok": True})
+        # More 429s than MAX_RETRIES+1, then success
+        client._client.request.side_effect = (
+            [rate_resp] * (MAX_RETRIES + 5) + [ok_resp]
+        )
 
-        with pytest.raises(DiscordAPIError) as exc_info:
-            await client._request("GET", "/test")
+        result = await client._request("GET", "/test")
 
-        # The outer for loop (MAX_RETRIES+1 iterations) exhausts before
-        # MAX_RATE_LIMIT_RETRIES is reached, so the fallback fires.
-        assert exc_info.value.status_code == 500
-        assert "Max retries exceeded" in exc_info.value.message
+        assert result == {"ok": True}
+        assert mock_sleep.await_count == MAX_RETRIES + 5
 
     @pytest.mark.asyncio
     async def test_401_raises_immediately(self):
