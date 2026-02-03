@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from discord_archive.utils.permissions import (
     ADMINISTRATOR,
     MANAGE_THREADS,

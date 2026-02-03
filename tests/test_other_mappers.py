@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-import pytest
-
 from discord_archive.ingest.mappers.emoji import map_emoji
 from discord_archive.ingest.mappers.role import map_role
 from discord_archive.ingest.mappers.sticker import map_sticker

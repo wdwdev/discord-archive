@@ -25,7 +25,6 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rich.table import Table
-from rich.text import Text
 
 from discord_archive.utils.logging import console
 

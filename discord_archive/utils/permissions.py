@@ -6,7 +6,6 @@ Used to pre-filter channels before making API requests to avoid 403 errors.
 
 from __future__ import annotations
 
-
 # Permission bit flags
 # See: https://discord.com/developers/docs/topics/permissions#permissions-bitwise-permission-flags
 VIEW_CHANNEL = 0x0000000000000400  # 1 << 10

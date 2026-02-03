@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from io import StringIO
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
 from rich.console import Console
 
 from discord_archive.utils.pipeline_logger import BasePipelineLogger, StructuredBlock

@@ -35,8 +35,12 @@ def map_guild(data: dict[str, Any]) -> Guild:
         widget_channel_id=int(data["widget_channel_id"]) if data.get("widget_channel_id") else None,
         system_channel_id=int(data["system_channel_id"]) if data.get("system_channel_id") else None,
         rules_channel_id=int(data["rules_channel_id"]) if data.get("rules_channel_id") else None,
-        public_updates_channel_id=int(data["public_updates_channel_id"]) if data.get("public_updates_channel_id") else None,
-        safety_alerts_channel_id=int(data["safety_alerts_channel_id"]) if data.get("safety_alerts_channel_id") else None,
+        public_updates_channel_id=(
+            int(data["public_updates_channel_id"]) if data.get("public_updates_channel_id") else None
+        ),
+        safety_alerts_channel_id=(
+            int(data["safety_alerts_channel_id"]) if data.get("safety_alerts_channel_id") else None
+        ),
         # Moderation levels
         verification_level=data.get("verification_level", 0),
         default_message_notifications=data.get("default_message_notifications", 0),

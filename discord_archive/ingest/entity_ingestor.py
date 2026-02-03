@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from discord_archive.db.models import Emoji, Role, Sticker, GuildScheduledEvent
+from discord_archive.db.models import Emoji, GuildScheduledEvent, Role, Sticker
 from discord_archive.ingest.client import DiscordAPIError, DiscordClient
 from discord_archive.ingest.logger import logger
 from discord_archive.ingest.mappers import (

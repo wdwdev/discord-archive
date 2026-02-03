@@ -16,7 +16,6 @@ import httpx
 
 from discord_archive.ingest.logger import logger
 
-
 # Discord API base URL
 BASE_URL = "https://discord.com/api/v10"
 

@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import sessionmaker
+    pass
 
 
 # Engine cache: database_url -> engine

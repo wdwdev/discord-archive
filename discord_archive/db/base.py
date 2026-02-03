@@ -3,7 +3,7 @@ from typing import Any
 
 from sqlalchemy import BigInteger, DateTime, Numeric
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, mapped_column
+from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.types import TypeDecorator
 
 

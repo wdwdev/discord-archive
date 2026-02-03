@@ -17,7 +17,7 @@ from discord_archive.ingest.mappers.channel import (
     CHANNEL_TYPE_TEXT,
     CHANNEL_TYPE_VOICE,
 )
-from discord_archive.utils.permissions import VIEW_CHANNEL, CONNECT
+from discord_archive.utils.permissions import CONNECT, VIEW_CHANNEL
 
 
 class TestFilterViewableTextChannels:

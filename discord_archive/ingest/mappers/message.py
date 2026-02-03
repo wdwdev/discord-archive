@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from discord_archive.db.models import Attachment, Message, Reaction

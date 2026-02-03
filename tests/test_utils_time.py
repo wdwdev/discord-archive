@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import pytest
-
 from discord_archive.utils.time import parse_iso8601, utcnow
 
 

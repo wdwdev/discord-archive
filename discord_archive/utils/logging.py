@@ -27,7 +27,6 @@ from pathlib import Path
 from rich.console import Console
 from rich.logging import RichHandler
 
-
 # The ONE and ONLY shared Console instance for the entire project.
 # All RichHandler, Progress, Live, Status, and tables MUST use this console.
 console = Console()
