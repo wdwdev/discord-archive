@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from discord_archive.ingest.client import DiscordClient
+from discord_archive.ingest.client import DiscordAPIError, DiscordClient
 from discord_archive.ingest.logger import logger
 from discord_archive.ingest.mappers.channel import (
     CHANNEL_TYPE_FORUM,
@@ -145,7 +145,7 @@ async def _fetch_text_channel_threads(
             if not result.get("has_more", False) or not threads:
                 break
             before = threads[-1]["thread_metadata"]["archive_timestamp"]
-    except Exception as e:
+    except DiscordAPIError as e:
         logger.debug(
             f"Failed to fetch public archived threads for channel {channel_id}: {e}"
         )
@@ -163,7 +163,7 @@ async def _fetch_text_channel_threads(
                 if not result.get("has_more", False) or not threads:
                     break
                 before = threads[-1]["thread_metadata"]["archive_timestamp"]
-        except Exception as e:
+        except DiscordAPIError as e:
             logger.debug(
                 f"Failed to fetch private archived threads for channel {channel_id}: {e}"
             )
@@ -184,7 +184,7 @@ async def _fetch_forum_channel_threads(
             if not result.get("has_more", False) or not threads:
                 break
             before = threads[-1]["thread_metadata"]["archive_timestamp"]
-    except Exception as e:
+    except DiscordAPIError as e:
         logger.debug(
             f"Failed to fetch archived threads for forum/media channel {channel_id}: {e}"
         )
