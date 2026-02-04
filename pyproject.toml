@@ -21,6 +21,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+rag = [
+    "transformers>=4.40",
+    "torch>=2.0",
+    "lancedb>=0.5",
+    "sentence-transformers>=2.7",
+]
 test = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",

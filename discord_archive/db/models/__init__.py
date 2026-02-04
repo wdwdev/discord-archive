@@ -6,6 +6,8 @@ All models use SQLAlchemy 2.0 syntax with PostgreSQL dialect.
 from discord_archive.db.base import Base
 from discord_archive.db.models.attachment import Attachment
 from discord_archive.db.models.channel import Channel
+from discord_archive.db.models.chunk import Chunk
+from discord_archive.db.models.chunking_checkpoint import ChunkingCheckpoint
 from discord_archive.db.models.emoji import Emoji
 from discord_archive.db.models.guild import Guild
 from discord_archive.db.models.guild_scheduled_event import GuildScheduledEvent
@@ -20,6 +22,8 @@ __all__ = [
     "Base",
     "Attachment",
     "Channel",
+    "Chunk",
+    "ChunkingCheckpoint",
     "IngestCheckpoint",
     "Emoji",
     "Guild",
