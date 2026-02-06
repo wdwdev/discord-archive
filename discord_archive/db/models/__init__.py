@@ -7,6 +7,7 @@ from discord_archive.db.base import Base
 from discord_archive.db.models.attachment import Attachment
 from discord_archive.db.models.channel import Channel
 from discord_archive.db.models.chunk import Chunk
+from discord_archive.db.models.chunk_text import ChunkText
 from discord_archive.db.models.chunking_checkpoint import ChunkingCheckpoint
 from discord_archive.db.models.emoji import Emoji
 from discord_archive.db.models.guild import Guild
@@ -23,6 +24,7 @@ __all__ = [
     "Attachment",
     "Channel",
     "Chunk",
+    "ChunkText",
     "ChunkingCheckpoint",
     "IngestCheckpoint",
     "Emoji",

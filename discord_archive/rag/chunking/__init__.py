@@ -24,6 +24,11 @@ from discord_archive.rag.chunking.sliding_window import (
     SlidingWindowConfig,
     SlidingWindowState,
 )
+from discord_archive.rag.chunking.text_builder import (
+    MessageContext,
+    TextBuilder,
+    TextBuildingConfig,
+)
 from discord_archive.rag.chunking.tokenizer import TokenizerLoadError, estimate_tokens
 
 __all__ = [
@@ -45,6 +50,10 @@ __all__ = [
     # Reply chain
     "ReplyChainChunker",
     "ReplyChainConfig",
+    # Text builder
+    "TextBuilder",
+    "TextBuildingConfig",
+    "MessageContext",
     # Tokenizer
     "estimate_tokens",
     "TokenizerLoadError",

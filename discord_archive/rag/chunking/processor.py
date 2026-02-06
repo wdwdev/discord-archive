@@ -13,13 +13,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+from discord_archive.db.models.attachment import Attachment
 from discord_archive.db.models.chunk import Chunk
 from discord_archive.db.models.message import Message
+from discord_archive.db.models.user import User
 from discord_archive.db.repositories.chunk_repository import (
     bulk_insert_reply_chains,
     bulk_upsert_chunks,
     get_open_author_groups,
     get_open_sliding_window,
+)
+from discord_archive.db.repositories.chunk_text_repository import (
+    bulk_insert_chunk_texts,
 )
 from discord_archive.db.repositories.chunking_checkpoint_repository import (
     get_chunking_checkpoint,
@@ -38,6 +43,10 @@ from discord_archive.rag.chunking.sliding_window import (
     SlidingWindowChunker,
     SlidingWindowConfig,
     SlidingWindowState,
+)
+from discord_archive.rag.chunking.text_builder import (
+    MessageContext,
+    TextBuilder,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,6 +95,7 @@ class ChunkingProcessor:
         self.sliding_window = SlidingWindowChunker(self.config.sliding_window)
         self.author_group = AuthorGroupChunker(self.config.author_group)
         self.reply_chain = ReplyChainChunker(self.config.reply_chain)
+        self.text_builder = TextBuilder()
 
     async def process_channel(
         self,
@@ -130,8 +140,8 @@ class ChunkingProcessor:
                 messages, message_lookup, guild_id, channel_id, sw_state, ag_state
             )
 
-            # Batch persist all chunks
-            await self._persist_chunks_batch(session, chunks_to_persist)
+            # Batch persist all chunks and build texts
+            await self._persist_chunks_batch(session, chunks_to_persist, message_lookup)
 
             # Update stats
             stats.messages_processed += batch_stats.messages_processed
@@ -234,10 +244,12 @@ class ChunkingProcessor:
         self,
         session: AsyncSession,
         chunks: list[Chunk],
+        message_lookup: dict[int, Message],
     ) -> None:
         """Persist multiple chunks efficiently using bulk operations.
 
         Chunks are already deduplicated by _process_batch.
+        Also builds and persists chunk texts after chunk IDs are available.
         """
         if not chunks:
             return
@@ -258,6 +270,9 @@ class ChunkingProcessor:
                 key = (chunk.chunk_type, chunk.channel_id, chunk.start_message_id)
                 if key in id_map and chunk.chunk_id is None:
                     chunk.chunk_id = id_map[key]
+
+        # Build and persist texts for chunks with IDs
+        await self._build_and_persist_texts(session, chunks, message_lookup)
 
     async def _load_states(
         self,
@@ -295,6 +310,7 @@ class ChunkingProcessor:
                         Message.created_at,
                         Message.type,
                         Message.referenced_message_id,
+                        Message.embeds,
                     )
                     .where(Message.message_id.in_(all_message_ids))
                 )
@@ -308,6 +324,7 @@ class ChunkingProcessor:
                         created_at=row.created_at,
                         type=row.type,
                         referenced_message_id=row.referenced_message_id,
+                        embeds=row.embeds or [],
                     )
 
             # Build messages_by_author from the fetched messages
@@ -357,6 +374,7 @@ class ChunkingProcessor:
                 Message.created_at,
                 Message.type,
                 Message.referenced_message_id,
+                Message.embeds,
             )
             .where(Message.channel_id == channel_id)
             .where(Message.message_id > after_message_id)
@@ -376,6 +394,7 @@ class ChunkingProcessor:
                 created_at=row.created_at,
                 type=row.type,
                 referenced_message_id=row.referenced_message_id,
+                embeds=row.embeds or [],
             )
             for row in rows
         ]
@@ -401,6 +420,7 @@ class ChunkingProcessor:
                 Message.created_at,
                 Message.type,
                 Message.referenced_message_id,
+                Message.embeds,
             )
             .where(Message.message_id.in_(message_ids))
         )
@@ -417,6 +437,7 @@ class ChunkingProcessor:
                 created_at=row.created_at,
                 type=row.type,
                 referenced_message_id=row.referenced_message_id,
+                embeds=row.embeds or [],
             )
             for row in rows
         }
@@ -475,6 +496,7 @@ class ChunkingProcessor:
                     Message.created_at,
                     Message.type,
                     Message.referenced_message_id,
+                    Message.embeds,
                 )
                 .where(Message.message_id.in_(pending_ids))
             )
@@ -495,6 +517,7 @@ class ChunkingProcessor:
                     created_at=row.created_at,
                     type=row.type,
                     referenced_message_id=row.referenced_message_id,
+                    embeds=row.embeds or [],
                 )
                 # Queue parent for next iteration
                 if row.referenced_message_id and row.referenced_message_id not in lookup:
@@ -519,3 +542,129 @@ class ChunkingProcessor:
             )
 
         return lookup
+
+    async def _fetch_attachments_for_messages(
+        self,
+        session: AsyncSession,
+        message_ids: list[int],
+    ) -> dict[int, list[Attachment]]:
+        """Fetch attachments grouped by message_id.
+
+        Returns a dict mapping message_id to list of Attachment objects.
+        Messages without attachments are not included in the result.
+        """
+        if not message_ids:
+            return {}
+
+        stmt = select(Attachment).where(Attachment.message_id.in_(message_ids))
+        result = await session.scalars(stmt)
+        attachments = result.all()
+
+        # Group by message_id
+        grouped: dict[int, list[Attachment]] = {}
+        for att in attachments:
+            if att.message_id not in grouped:
+                grouped[att.message_id] = []
+            grouped[att.message_id].append(att)
+
+        return grouped
+
+    async def _fetch_users_for_authors(
+        self,
+        session: AsyncSession,
+        author_ids: list[int],
+    ) -> dict[int, str]:
+        """Fetch usernames by user_id.
+
+        Returns a dict mapping user_id to username.
+        Missing users are not included in the result (caller should handle None).
+        """
+        if not author_ids:
+            return {}
+
+        # Deduplicate author_ids
+        unique_ids = list(set(author_ids))
+
+        stmt = select(User.user_id, User.username).where(User.user_id.in_(unique_ids))
+        result = await session.execute(stmt)
+
+        # Build mapping, only including users with usernames
+        return {
+            row.user_id: row.username
+            for row in result.all()
+            if row.username is not None
+        }
+
+    async def _build_and_persist_texts(
+        self,
+        session: AsyncSession,
+        chunks: list[Chunk],
+        message_lookup: dict[int, Message],
+    ) -> None:
+        """Build and persist chunk texts.
+
+        Fetches attachments and usernames, builds MessageContext for each message,
+        then builds and persists chunk texts.
+        """
+        # Filter to chunks with IDs (successfully persisted)
+        chunks_with_ids = [c for c in chunks if c.chunk_id is not None]
+        if not chunks_with_ids:
+            return
+
+        # Collect all message_ids and author_ids from chunks
+        all_message_ids: set[int] = set()
+        all_author_ids: set[int] = set()
+        for chunk in chunks_with_ids:
+            for mid in chunk.message_ids:
+                all_message_ids.add(mid)
+            for aid in chunk.author_ids:
+                all_author_ids.add(aid)
+
+        # Find messages missing from lookup (from previous batches)
+        missing_ids = [mid for mid in all_message_ids if mid not in message_lookup]
+        if missing_ids:
+            # Fetch missing messages and add to lookup
+            missing_messages = await self._fetch_messages_by_ids(session, missing_ids)
+            for msg in missing_messages:
+                message_lookup[msg.message_id] = msg
+
+        # Batch fetch attachments and usernames
+        attachments_by_msg = await self._fetch_attachments_for_messages(
+            session, list(all_message_ids)
+        )
+        usernames_by_author = await self._fetch_users_for_authors(
+            session, list(all_author_ids)
+        )
+
+        # Build texts for each chunk
+        chunk_texts: list[tuple[int, str, int]] = []
+        for chunk in chunks_with_ids:
+            # Build MessageContext for each message in the chunk
+            contexts: list[MessageContext] = []
+            for mid in chunk.message_ids:
+                msg = message_lookup.get(mid)
+                if msg is None:
+                    logger.warning(
+                        "Chunk %d references message %d not found in database",
+                        chunk.chunk_id,
+                        mid,
+                    )
+                    continue
+
+                ctx = MessageContext(
+                    message=msg,
+                    author_username=usernames_by_author.get(msg.author_id),
+                    attachments=attachments_by_msg.get(mid, []),
+                )
+                contexts.append(ctx)
+
+            if not contexts:
+                continue
+
+            # Build text
+            text, token_count = self.text_builder.build_chunk_text(chunk, contexts)
+            chunk_texts.append((chunk.chunk_id, text, token_count))
+
+        # Bulk insert chunk texts
+        if chunk_texts:
+            await bulk_insert_chunk_texts(session, chunk_texts)
