@@ -22,10 +22,11 @@ dependencies = [
 
 [project.optional-dependencies]
 rag = [
-    "transformers>=4.40",
+    "transformers>=4.42,<4.45",  # NV-Embed-v2 remote code requires this range
     "torch>=2.0",
     "lancedb>=0.5",
-    "sentence-transformers>=2.7",
+    "datasets>=2.0",   # NV-Embed-v2 remote code imports datasets.Dataset
+    "einops>=0.7",     # NV-Embed-v2 remote code imports einops
 ]
 test = [
     "pytest>=8.0",
