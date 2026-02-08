@@ -254,6 +254,16 @@ class ChunkingProcessor:
         if not chunks:
             return
 
+        # Set has_attachments before persisting
+        msg_ids_with_attachments = await self._get_message_ids_with_attachments(
+            session, chunks
+        )
+        for chunk in chunks:
+            if not chunk.has_attachments:
+                chunk.has_attachments = any(
+                    mid in msg_ids_with_attachments for mid in chunk.message_ids
+                )
+
         # Separate by type for optimal bulk handling
         reply_chains = [c for c in chunks if c.chunk_type == "reply_chain"]
         other_chunks = [c for c in chunks if c.chunk_type != "reply_chain"]
@@ -311,6 +321,8 @@ class ChunkingProcessor:
                         Message.type,
                         Message.referenced_message_id,
                         Message.embeds,
+                        Message.mentions,
+                        Message.mention_roles,
                     )
                     .where(Message.message_id.in_(all_message_ids))
                 )
@@ -325,6 +337,8 @@ class ChunkingProcessor:
                         type=row.type,
                         referenced_message_id=row.referenced_message_id,
                         embeds=row.embeds or [],
+                        mentions=row.mentions or [],
+                        mention_roles=row.mention_roles or [],
                     )
 
             # Build messages_by_author from the fetched messages
@@ -375,6 +389,8 @@ class ChunkingProcessor:
                 Message.type,
                 Message.referenced_message_id,
                 Message.embeds,
+                Message.mentions,
+                Message.mention_roles,
             )
             .where(Message.channel_id == channel_id)
             .where(Message.message_id > after_message_id)
@@ -395,6 +411,8 @@ class ChunkingProcessor:
                 type=row.type,
                 referenced_message_id=row.referenced_message_id,
                 embeds=row.embeds or [],
+                mentions=row.mentions or [],
+                mention_roles=row.mention_roles or [],
             )
             for row in rows
         ]
@@ -421,6 +439,8 @@ class ChunkingProcessor:
                 Message.type,
                 Message.referenced_message_id,
                 Message.embeds,
+                Message.mentions,
+                Message.mention_roles,
             )
             .where(Message.message_id.in_(message_ids))
         )
@@ -438,6 +458,8 @@ class ChunkingProcessor:
                 type=row.type,
                 referenced_message_id=row.referenced_message_id,
                 embeds=row.embeds or [],
+                mentions=row.mentions or [],
+                mention_roles=row.mention_roles or [],
             )
             for row in rows
         }
@@ -497,6 +519,8 @@ class ChunkingProcessor:
                     Message.type,
                     Message.referenced_message_id,
                     Message.embeds,
+                    Message.mentions,
+                    Message.mention_roles,
                 )
                 .where(Message.message_id.in_(pending_ids))
             )
@@ -518,6 +542,8 @@ class ChunkingProcessor:
                     type=row.type,
                     referenced_message_id=row.referenced_message_id,
                     embeds=row.embeds or [],
+                    mentions=row.mentions or [],
+                    mention_roles=row.mention_roles or [],
                 )
                 # Queue parent for next iteration
                 if row.referenced_message_id and row.referenced_message_id not in lookup:
@@ -568,6 +594,33 @@ class ChunkingProcessor:
             grouped[att.message_id].append(att)
 
         return grouped
+
+    async def _get_message_ids_with_attachments(
+        self,
+        session: AsyncSession,
+        chunks: list[Chunk],
+    ) -> set[int]:
+        """Get message IDs that have attachments.
+
+        Collects all message IDs from chunks and queries the attachments table
+        to find which ones have attachments. Returns a set of message IDs.
+        """
+        all_msg_ids: set[int] = set()
+        for chunk in chunks:
+            if not chunk.has_attachments:
+                all_msg_ids.update(chunk.message_ids)
+
+        if not all_msg_ids:
+            return set()
+
+        from sqlalchemy import distinct
+
+        stmt = (
+            select(distinct(Attachment.message_id))
+            .where(Attachment.message_id.in_(list(all_msg_ids)))
+        )
+        result = await session.scalars(stmt)
+        return set(result.all())
 
     async def _fetch_users_for_authors(
         self,

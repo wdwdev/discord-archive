@@ -141,6 +141,13 @@ class AuthorGroupChunker:
                 messages.append(message)
                 total_tokens += message_tokens
                 chunk.message_ids = [m.message_id for m in messages]
+                chunk.mentioned_user_ids = sorted(set(
+                    uid for m in messages for uid in (m.mentions or [])
+                ))
+                chunk.mentioned_role_ids = sorted(set(
+                    rid for m in messages for rid in (m.mention_roles or [])
+                ))
+                chunk.last_message_at = message.created_at
                 # author_ids stays the same (single author)
                 state.set_author_chunk(
                     author_id, chunk, messages, total_tokens, message_time
@@ -162,9 +169,14 @@ class AuthorGroupChunker:
             channel_id=channel_id,
             message_ids=[message.message_id],
             author_ids=[message.author_id],
+            mentioned_user_ids=sorted(set(message.mentions or [])),
+            mentioned_role_ids=sorted(set(message.mention_roles or [])),
+            has_attachments=False,
             chunk_state="open",
             start_message_id=message.message_id,
             leaf_message_id=None,
             cross_channel_ref=None,
             embedding_status="pending",
+            first_message_at=message.created_at,
+            last_message_at=message.created_at,
         )

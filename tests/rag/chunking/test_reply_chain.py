@@ -18,9 +18,11 @@ def make_message(
     channel_id: int = 100,
     referenced_message_id: int | None = None,
     msg_type: int = 0,
+    mentions: list[int] | None = None,
+    mention_roles: list[int] | None = None,
 ) -> Message:
     """Create a test message."""
-    msg = Message(
+    return Message(
         message_id=message_id,
         channel_id=channel_id,
         author_id=author_id,
@@ -28,8 +30,9 @@ def make_message(
         created_at=datetime.now(timezone.utc),
         type=msg_type,
         referenced_message_id=referenced_message_id,
+        mentions=mentions or [],
+        mention_roles=mention_roles or [],
     )
-    return msg
 
 
 class TestReplyChainConfig:
@@ -76,6 +79,8 @@ class TestReplyChainChunker:
         assert set(result.author_ids) == {100, 200}
         assert result.start_message_id == 1
         assert result.leaf_message_id == 2
+        assert result.first_message_at == msg1.created_at
+        assert result.last_message_at == msg2.created_at
 
     def test_deep_chain_traversal(self) -> None:
         chunker = ReplyChainChunker()
@@ -196,6 +201,22 @@ class TestReplyChainChunker:
 
         # Should return None when no content
         assert result is None
+
+    def test_mentions_collected_from_chain(self) -> None:
+        chunker = ReplyChainChunker()
+
+        msg1 = make_message(1, content="original", mentions=[300])
+        msg2 = make_message(
+            2, content="reply", referenced_message_id=1, mention_roles=[10]
+        )
+        lookup = {1: msg1, 2: msg2}
+
+        result = chunker.process_message(msg2, lookup, guild_id=1, channel_id=100)
+
+        assert result is not None
+        assert result.mentioned_user_ids == [300]
+        assert result.mentioned_role_ids == [10]
+        assert result.has_attachments is False
 
     def test_embedding_status_is_pending(self) -> None:
         chunker = ReplyChainChunker()

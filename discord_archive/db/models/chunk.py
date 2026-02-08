@@ -4,6 +4,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Index,
     Text,
@@ -50,6 +51,23 @@ class Chunk(Base):
         nullable=False,
     )
 
+    # Mention metadata (for filtering)
+    mentioned_user_ids: Mapped[list[int]] = mapped_column(
+        ARRAY(BigInteger),
+        nullable=False,
+        default=list,
+    )
+    mentioned_role_ids: Mapped[list[int]] = mapped_column(
+        ARRAY(BigInteger),
+        nullable=False,
+        default=list,
+    )
+    has_attachments: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
     # Chunk state
     chunk_state: Mapped[str] = mapped_column(
         Text,
@@ -63,12 +81,16 @@ class Chunk(Base):
     # Cross-channel reference (for reply chains that hit channel boundary)
     cross_channel_ref: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
-    # Embedding status for incremental embedding pipeline
+    # Embedding status for incremental embedding
     embedding_status: Mapped[str] = mapped_column(
         Text,
         nullable=False,
         default="pending",
     )
+
+    # Message time range (for filtering by when messages were sent)
+    first_message_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    last_message_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(

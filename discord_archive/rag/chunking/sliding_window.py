@@ -105,6 +105,13 @@ class SlidingWindowChunker:
                 state.total_tokens += message_tokens
                 state.chunk.message_ids = [m.message_id for m in state.messages]
                 state.chunk.author_ids = sorted(set(m.author_id for m in state.messages))
+                state.chunk.mentioned_user_ids = sorted(set(
+                    uid for m in state.messages for uid in (m.mentions or [])
+                ))
+                state.chunk.mentioned_role_ids = sorted(set(
+                    rid for m in state.messages for rid in (m.mention_roles or [])
+                ))
+                state.chunk.last_message_at = message.created_at
                 chunks_to_persist.append(state.chunk)
 
         return state, chunks_to_persist
@@ -123,11 +130,16 @@ class SlidingWindowChunker:
             channel_id=channel_id,
             message_ids=[message.message_id],
             author_ids=[message.author_id],
+            mentioned_user_ids=sorted(set(message.mentions or [])),
+            mentioned_role_ids=sorted(set(message.mention_roles or [])),
+            has_attachments=False,
             chunk_state="open",
             start_message_id=message.message_id,
             leaf_message_id=None,
             cross_channel_ref=None,
             embedding_status="pending",
+            first_message_at=message.created_at,
+            last_message_at=message.created_at,
         )
         return SlidingWindowState(
             chunk=chunk,
@@ -156,11 +168,20 @@ class SlidingWindowChunker:
             channel_id=channel_id,
             message_ids=[m.message_id for m in messages],
             author_ids=sorted(set(m.author_id for m in messages)),
+            mentioned_user_ids=sorted(set(
+                uid for m in messages for uid in (m.mentions or [])
+            )),
+            mentioned_role_ids=sorted(set(
+                rid for m in messages for rid in (m.mention_roles or [])
+            )),
+            has_attachments=False,
             chunk_state="open",
             start_message_id=start_message_id,
             leaf_message_id=None,
             cross_channel_ref=None,
             embedding_status="pending",
+            first_message_at=messages[0].created_at,
+            last_message_at=messages[-1].created_at,
         )
         return SlidingWindowState(
             chunk=chunk,

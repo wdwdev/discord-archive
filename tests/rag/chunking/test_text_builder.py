@@ -69,6 +69,7 @@ def make_chunk(
     message_ids: list[int],
 ) -> Chunk:
     """Create a test chunk."""
+    ts = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
     return Chunk(
         chunk_id=chunk_id,
         chunk_type=chunk_type,
@@ -80,6 +81,8 @@ def make_chunk(
         start_message_id=message_ids[0],
         leaf_message_id=message_ids[-1] if chunk_type == "reply_chain" else None,
         embedding_status="pending",
+        first_message_at=ts,
+        last_message_at=ts,
     )
 
 

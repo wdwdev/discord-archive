@@ -78,11 +78,16 @@ async def upsert_chunk(
         "channel_id": chunk.channel_id,
         "message_ids": chunk.message_ids,
         "author_ids": chunk.author_ids,
+        "mentioned_user_ids": chunk.mentioned_user_ids,
+        "mentioned_role_ids": chunk.mentioned_role_ids,
+        "has_attachments": chunk.has_attachments,
         "chunk_state": chunk.chunk_state,
         "start_message_id": chunk.start_message_id,
         "leaf_message_id": chunk.leaf_message_id,
         "cross_channel_ref": chunk.cross_channel_ref,
         "embedding_status": chunk.embedding_status,
+        "first_message_at": chunk.first_message_at,
+        "last_message_at": chunk.last_message_at,
         "updated_at": utcnow(),
     }
 
@@ -150,11 +155,16 @@ async def insert_chunk_on_conflict_do_nothing(
         "channel_id": chunk.channel_id,
         "message_ids": chunk.message_ids,
         "author_ids": chunk.author_ids,
+        "mentioned_user_ids": chunk.mentioned_user_ids,
+        "mentioned_role_ids": chunk.mentioned_role_ids,
+        "has_attachments": chunk.has_attachments,
         "chunk_state": chunk.chunk_state,
         "start_message_id": chunk.start_message_id,
         "leaf_message_id": chunk.leaf_message_id,
         "cross_channel_ref": chunk.cross_channel_ref,
         "embedding_status": chunk.embedding_status,
+        "first_message_at": chunk.first_message_at,
+        "last_message_at": chunk.last_message_at,
         "created_at": now,
         "updated_at": now,
     }
@@ -194,21 +204,21 @@ async def update_chunk_messages(
     chunk_id: int,
     message_ids: list[int],
     author_ids: list[int],
+    last_message_at: datetime | None = None,
 ) -> None:
     """Update a chunk's message_ids and author_ids.
 
     Also sets embedding_status to 'pending' for re-embedding.
     """
-    stmt = (
-        update(Chunk)
-        .where(Chunk.chunk_id == chunk_id)
-        .values(
-            message_ids=message_ids,
-            author_ids=author_ids,
-            embedding_status="pending",
-            updated_at=utcnow(),
-        )
-    )
+    values: dict = {
+        "message_ids": message_ids,
+        "author_ids": author_ids,
+        "embedding_status": "pending",
+        "updated_at": utcnow(),
+    }
+    if last_message_at is not None:
+        values["last_message_at"] = last_message_at
+    stmt = update(Chunk).where(Chunk.chunk_id == chunk_id).values(**values)
     await session.execute(stmt)
 
 
@@ -289,11 +299,16 @@ async def bulk_insert_reply_chains(
                 "channel_id": c.channel_id,
                 "message_ids": c.message_ids,
                 "author_ids": c.author_ids,
+                "mentioned_user_ids": c.mentioned_user_ids,
+                "mentioned_role_ids": c.mentioned_role_ids,
+                "has_attachments": c.has_attachments,
                 "chunk_state": c.chunk_state,
                 "start_message_id": c.start_message_id,
                 "leaf_message_id": c.leaf_message_id,
                 "cross_channel_ref": c.cross_channel_ref,
                 "embedding_status": c.embedding_status,
+                "first_message_at": c.first_message_at,
+                "last_message_at": c.last_message_at,
                 "created_at": now,
                 "updated_at": now,
             }
@@ -339,8 +354,12 @@ async def bulk_upsert_chunks(
             .values(
                 message_ids=chunk.message_ids,
                 author_ids=chunk.author_ids,
+                mentioned_user_ids=chunk.mentioned_user_ids,
+                mentioned_role_ids=chunk.mentioned_role_ids,
+                has_attachments=chunk.has_attachments,
                 chunk_state=chunk.chunk_state,
                 embedding_status=chunk.embedding_status,
+                last_message_at=chunk.last_message_at,
                 updated_at=now,
             )
         )
@@ -414,8 +433,12 @@ async def _bulk_upsert_by_type(
             .values(
                 message_ids=chunk.message_ids,
                 author_ids=chunk.author_ids,
+                mentioned_user_ids=chunk.mentioned_user_ids,
+                mentioned_role_ids=chunk.mentioned_role_ids,
+                has_attachments=chunk.has_attachments,
                 chunk_state=chunk.chunk_state,
                 embedding_status=chunk.embedding_status,
+                last_message_at=chunk.last_message_at,
                 updated_at=now,
             )
         )
@@ -435,11 +458,16 @@ async def _bulk_upsert_by_type(
                     "channel_id": c.channel_id,
                     "message_ids": c.message_ids,
                     "author_ids": c.author_ids,
+                    "mentioned_user_ids": c.mentioned_user_ids,
+                    "mentioned_role_ids": c.mentioned_role_ids,
+                    "has_attachments": c.has_attachments,
                     "chunk_state": c.chunk_state,
                     "start_message_id": c.start_message_id,
                     "leaf_message_id": c.leaf_message_id,
                     "cross_channel_ref": c.cross_channel_ref,
                     "embedding_status": c.embedding_status,
+                    "first_message_at": c.first_message_at,
+                    "last_message_at": c.last_message_at,
                     "created_at": now,
                     "updated_at": now,
                 }
@@ -483,8 +511,12 @@ async def _bulk_upsert_by_type(
                             .values(
                                 message_ids=chunk.message_ids,
                                 author_ids=chunk.author_ids,
+                                mentioned_user_ids=chunk.mentioned_user_ids,
+                                mentioned_role_ids=chunk.mentioned_role_ids,
+                                has_attachments=chunk.has_attachments,
                                 chunk_state=chunk.chunk_state,
                                 embedding_status=chunk.embedding_status,
+                                last_message_at=chunk.last_message_at,
                                 updated_at=now,
                             )
                         )
@@ -500,11 +532,16 @@ async def _bulk_upsert_by_type(
                                 channel_id=chunk.channel_id,
                                 message_ids=chunk.message_ids,
                                 author_ids=chunk.author_ids,
+                                mentioned_user_ids=chunk.mentioned_user_ids,
+                                mentioned_role_ids=chunk.mentioned_role_ids,
+                                has_attachments=chunk.has_attachments,
                                 chunk_state=chunk.chunk_state,
                                 start_message_id=chunk.start_message_id,
                                 leaf_message_id=chunk.leaf_message_id,
                                 cross_channel_ref=chunk.cross_channel_ref,
                                 embedding_status=chunk.embedding_status,
+                                first_message_at=chunk.first_message_at,
+                                last_message_at=chunk.last_message_at,
                                 created_at=now,
                                 updated_at=now,
                             )

@@ -18,17 +18,20 @@ def make_message(
     content: str = "test",
     channel_id: int = 100,
     msg_type: int = 0,
+    mentions: list[int] | None = None,
+    mention_roles: list[int] | None = None,
 ) -> Message:
     """Create a test message."""
-    msg = Message(
+    return Message(
         message_id=message_id,
         channel_id=channel_id,
         author_id=author_id,
         content=content,
         created_at=datetime.now(timezone.utc),
         type=msg_type,
+        mentions=mentions or [],
+        mention_roles=mention_roles or [],
     )
-    return msg
 
 
 class TestSlidingWindowConfig:
@@ -88,6 +91,8 @@ class TestSlidingWindowChunker:
         assert chunks[0].author_ids == [1]
         assert chunks[0].start_message_id == 1
         assert chunks[0].embedding_status == "pending"
+        assert chunks[0].first_message_at == msg.created_at
+        assert chunks[0].last_message_at == msg.created_at
 
     def test_appends_to_existing_window(self) -> None:
         chunker = SlidingWindowChunker()
@@ -106,6 +111,8 @@ class TestSlidingWindowChunker:
         assert len(chunks) == 1
         assert chunks[0].message_ids == [1, 2]
         assert chunks[0].chunk_state == "open"
+        assert chunks[0].first_message_at == msg1.created_at
+        assert chunks[0].last_message_at == msg2.created_at
 
     def test_closes_window_and_creates_new_when_exceeds_tokens(self) -> None:
         # Very small max_tokens to trigger closure
@@ -198,11 +205,37 @@ class TestSlidingWindowChunker:
         # Should have both authors
         assert set(chunks[0].author_ids) == {100, 200}
 
+    def test_mentions_aggregated(self) -> None:
+        chunker = SlidingWindowChunker()
+        state = chunker.create_empty_state()
+
+        msg1 = make_message(1, content="hello", mentions=[300], mention_roles=[10])
+        msg2 = make_message(2, content="world", mentions=[300, 400], mention_roles=[20])
+
+        state, _ = chunker.process_message(state, msg1, guild_id=1, channel_id=100)
+        state, chunks = chunker.process_message(state, msg2, guild_id=1, channel_id=100)
+
+        assert chunks[0].mentioned_user_ids == sorted({300, 400})
+        assert chunks[0].mentioned_role_ids == sorted({10, 20})
+
+    def test_has_attachments_defaults_false(self) -> None:
+        chunker = SlidingWindowChunker()
+        state = chunker.create_empty_state()
+        msg = make_message(1, content="hello")
+
+        state, chunks = chunker.process_message(state, msg, guild_id=1, channel_id=100)
+
+        assert chunks[0].has_attachments is False
+
     def test_load_state_from_existing_chunk(self) -> None:
         from discord_archive.db.models.chunk import Chunk
 
         chunker = SlidingWindowChunker()
 
+        messages = [
+            make_message(1, content="hello"),
+            make_message(2, content="world"),
+        ]
         chunk = Chunk(
             chunk_type="sliding_window",
             guild_id=1,
@@ -212,11 +245,9 @@ class TestSlidingWindowChunker:
             chunk_state="open",
             start_message_id=1,
             embedding_status="pending",
+            first_message_at=messages[0].created_at,
+            last_message_at=messages[-1].created_at,
         )
-        messages = [
-            make_message(1, content="hello"),
-            make_message(2, content="world"),
-        ]
 
         state = chunker.load_state(chunk, messages)
 

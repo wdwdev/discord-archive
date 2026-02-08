@@ -77,11 +77,20 @@ class ReplyChainChunker:
             channel_id=channel_id,
             message_ids=[m.message_id for m in chain],
             author_ids=sorted(set(m.author_id for m in chain)),
+            mentioned_user_ids=sorted(set(
+                uid for m in chain for uid in (m.mentions or [])
+            )),
+            mentioned_role_ids=sorted(set(
+                rid for m in chain for rid in (m.mention_roles or [])
+            )),
+            has_attachments=False,
             chunk_state="closed",  # Always closed
             start_message_id=chain[0].message_id,
             leaf_message_id=chain[-1].message_id,
             cross_channel_ref=cross_channel_ref,
             embedding_status="pending",
+            first_message_at=chain[0].created_at,
+            last_message_at=chain[-1].created_at,
         )
 
     def _build_chain(

@@ -19,17 +19,20 @@ def make_message(
     channel_id: int = 100,
     created_at: datetime | None = None,
     msg_type: int = 0,
+    mentions: list[int] | None = None,
+    mention_roles: list[int] | None = None,
 ) -> Message:
     """Create a test message."""
-    msg = Message(
+    return Message(
         message_id=message_id,
         channel_id=channel_id,
         author_id=author_id,
         content=content,
         created_at=created_at or datetime.now(timezone.utc),
         type=msg_type,
+        mentions=mentions or [],
+        mention_roles=mention_roles or [],
     )
-    return msg
 
 
 class TestAuthorGroupConfig:
@@ -61,6 +64,7 @@ class TestAuthorGroupState:
         from discord_archive.db.models.chunk import Chunk
 
         state = AuthorGroupState()
+        now = datetime.now(timezone.utc)
         chunk = Chunk(
             chunk_type="author_group",
             guild_id=1,
@@ -70,8 +74,9 @@ class TestAuthorGroupState:
             chunk_state="open",
             start_message_id=1,
             embedding_status="pending",
+            first_message_at=now,
+            last_message_at=now,
         )
-        now = datetime.now(timezone.utc)
         state.set_author_chunk(123, chunk, [], 0, now)
 
         result = state.get_author_chunk(123)
@@ -82,6 +87,7 @@ class TestAuthorGroupState:
         from discord_archive.db.models.chunk import Chunk
 
         state = AuthorGroupState()
+        now = datetime.now(timezone.utc)
         chunk = Chunk(
             chunk_type="author_group",
             guild_id=1,
@@ -91,8 +97,9 @@ class TestAuthorGroupState:
             chunk_state="open",
             start_message_id=1,
             embedding_status="pending",
+            first_message_at=now,
+            last_message_at=now,
         )
-        now = datetime.now(timezone.utc)
         state.set_author_chunk(123, chunk, [], 0, now)
 
         state.remove_author_chunk(123)
@@ -125,6 +132,8 @@ class TestAuthorGroupChunker:
         assert chunks[0].chunk_state == "open"
         assert chunks[0].message_ids == [1]
         assert chunks[0].author_ids == [100]
+        assert chunks[0].first_message_at == msg.created_at
+        assert chunks[0].last_message_at == msg.created_at
 
     def test_same_author_appends_to_chunk(self) -> None:
         chunker = AuthorGroupChunker()
@@ -149,6 +158,8 @@ class TestAuthorGroupChunker:
         assert len(chunks) == 1
         assert chunks[0].message_ids == [1, 2]
         assert chunks[0].chunk_state == "open"
+        assert chunks[0].first_message_at == msg1.created_at
+        assert chunks[0].last_message_at == msg2.created_at
 
     def test_different_authors_have_separate_chunks(self) -> None:
         chunker = AuthorGroupChunker()
@@ -233,6 +244,29 @@ class TestAuthorGroupChunker:
         assert chunks[0].chunk_state == "closed"
         assert chunks[1].chunk_state == "open"
 
+    def test_mentions_aggregated_on_append(self) -> None:
+        chunker = AuthorGroupChunker()
+        state = chunker.create_empty_state()
+        now = datetime.now(timezone.utc)
+
+        msg1 = make_message(
+            1, author_id=100, content="hi", created_at=now, mentions=[500]
+        )
+        msg2 = make_message(
+            2,
+            author_id=100,
+            content="bye",
+            created_at=now + timedelta(seconds=10),
+            mentions=[600],
+            mention_roles=[10],
+        )
+
+        state, _ = chunker.process_message(state, msg1, guild_id=1, channel_id=100)
+        state, chunks = chunker.process_message(state, msg2, guild_id=1, channel_id=100)
+
+        assert chunks[0].mentioned_user_ids == sorted({500, 600})
+        assert chunks[0].mentioned_role_ids == [10]
+
     def test_skips_thread_starter_messages(self) -> None:
         chunker = AuthorGroupChunker()
         state = chunker.create_empty_state()
@@ -251,6 +285,10 @@ class TestAuthorGroupChunker:
 
         chunker = AuthorGroupChunker()
 
+        messages = [
+            make_message(1, author_id=100, content="hello"),
+            make_message(2, author_id=100, content="world"),
+        ]
         chunk = Chunk(
             chunk_type="author_group",
             guild_id=1,
@@ -260,11 +298,9 @@ class TestAuthorGroupChunker:
             chunk_state="open",
             start_message_id=1,
             embedding_status="pending",
+            first_message_at=messages[0].created_at,
+            last_message_at=messages[-1].created_at,
         )
-        messages = [
-            make_message(1, author_id=100, content="hello"),
-            make_message(2, author_id=100, content="world"),
-        ]
 
         state = chunker.load_state(
             chunks={100: chunk},
