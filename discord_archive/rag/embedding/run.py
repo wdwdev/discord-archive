@@ -22,6 +22,7 @@ from sqlalchemy import distinct, func, select
 from discord_archive.core import BaseOrchestrator
 from discord_archive.db.models.channel import Channel
 from discord_archive.db.models.chunk import Chunk
+from discord_archive.db.models.chunk_text import ChunkText
 from discord_archive.rag.embedding.lancedb_store import LanceDBStore
 from discord_archive.rag.embedding.logger import logger
 from discord_archive.rag.embedding.model import EmbeddingModel
@@ -151,9 +152,10 @@ class EmbeddingOrchestrator(BaseOrchestrator):
     async def _get_pending_count(
         self, session, channel_id: int
     ) -> int:
-        """Get count of pending chunks for a channel."""
+        """Get count of pending chunks that have text ready for embedding."""
         stmt = (
             select(func.count(Chunk.chunk_id))
+            .join(ChunkText, Chunk.chunk_id == ChunkText.chunk_id)
             .where(Chunk.channel_id == channel_id)
             .where(Chunk.embedding_status == STATUS_PENDING)
         )
