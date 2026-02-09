@@ -1,4 +1,4 @@
-"""Discord Archive Ingest Pipeline.
+"""Discord Archive Ingest.
 
 This package provides tools for downloading Discord messages and metadata
 into the PostgreSQL archive.

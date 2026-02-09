@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "discord-archive"
 version = "0.1.0"
-description = "A Discord archive tool with optional RAG pipeline."
+description = "A Discord archive tool with optional RAG support."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [

@@ -1,4 +1,4 @@
-"""Tests for discord_archive.utils.pipeline_logger."""
+"""Tests for discord_archive.utils.logger."""
 
 from __future__ import annotations
 
@@ -8,10 +8,10 @@ from unittest.mock import MagicMock
 
 from rich.console import Console
 
-from discord_archive.utils.pipeline_logger import BasePipelineLogger, StructuredBlock
+from discord_archive.utils.logger import BaseLogger, StructuredBlock
 
 
-class ConcreteLogger(BasePipelineLogger):
+class ConcreteLogger(BaseLogger):
     """Concrete implementation for testing the abstract base class."""
 
     def __init__(self) -> None:
@@ -111,12 +111,12 @@ class TestStructuredBlock:
 
 
 # ---------------------------------------------------------------------------
-# TestBasePipelineLogger
+# TestBaseLogger
 # ---------------------------------------------------------------------------
 
 
-class TestBasePipelineLogger:
-    """Tests for BasePipelineLogger base class."""
+class TestBaseLogger:
+    """Tests for BaseLogger base class."""
 
     def test_clear_progress_line_resets_flag(self) -> None:
         logger = ConcreteLogger()
@@ -200,13 +200,13 @@ class TestBasePipelineLogger:
         logger = ConcreteLogger()
 
         logger.print_summary(
-            "Test Pipeline",
+            "Test",
             elapsed=12.3,
             stats={"Messages": 100, "Channels": 5},
         )
 
         output = logger.get_output()
-        assert "Test Pipeline Complete" in output
+        assert "Test Complete" in output
         assert "12.3s" in output
 
     def test_print_summary_with_extra_sections(self) -> None:

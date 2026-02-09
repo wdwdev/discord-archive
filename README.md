@@ -1,6 +1,6 @@
 # Discord Archive
 
-A Python-based tool for archiving Discord server data to PostgreSQL. Implements an ETL pipeline that ingests guild metadata, channels, roles, messages, emojis, stickers, and scheduled events using Discord's REST API with support for both historical backfill and incremental synchronization.
+A Python-based tool for archiving Discord server data to PostgreSQL. Implements an ETL process that ingests guild metadata, channels, roles, messages, emojis, stickers, and scheduled events using Discord's REST API with support for both historical backfill and incremental synchronization.
 
 ## Features
 
@@ -30,7 +30,7 @@ graph TB
         E[GuildProcessor]
     end
 
-    subgraph Ingestion["Ingestion Pipeline"]
+    subgraph Ingestion["Ingestion"]
         F[ChannelFetcher]
         G[EntityIngestor]
         H[Backfill]

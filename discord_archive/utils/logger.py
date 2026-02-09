@@ -1,10 +1,10 @@
-"""Base pipeline logger with shared components.
+"""Base logger with shared components.
 
-Provides reusable building blocks for pipeline-specific loggers:
+Provides reusable building blocks for task-specific loggers:
 - StructuredBlock: Context manager for key-value style output
-- BasePipelineLogger: Abstract base with common logging methods
+- BaseLogger: Abstract base with common logging methods
 
-All pipeline loggers should inherit from BasePipelineLogger to ensure consistent output.
+All loggers should inherit from BaseLogger to ensure consistent output.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ class StructuredBlock:
             ✓ ingested 1,234 messages
     """
 
-    def __init__(self, title: str, parent: "BasePipelineLogger") -> None:
+    def __init__(self, title: str, parent: "BaseLogger") -> None:
         self.title = title
         self.console = parent.console
         self._parent = parent
@@ -92,8 +92,8 @@ class StructuredBlock:
         self.console.print("    [dim]Empty, skipping[/dim]")
 
 
-class BasePipelineLogger(ABC):
-    """Abstract base class for pipeline loggers.
+class BaseLogger(ABC):
+    """Abstract base class for loggers.
 
     Provides common functionality:
     - Shared console instance
@@ -102,12 +102,12 @@ class BasePipelineLogger(ABC):
     - Structured block context manager
     - Progress bar context manager
 
-    Subclasses should implement pipeline-specific methods like
+    Subclasses should implement task-specific methods like
     summary(), channel_start(), etc.
     """
 
     def __init__(self, logger_name: str | None = None) -> None:
-        """Initialize the pipeline logger.
+        """Initialize the logger.
 
         Args:
             logger_name: Name for the Python logger. If None, uses __name__.
@@ -266,20 +266,20 @@ class BasePipelineLogger(ABC):
 
     def print_summary(
         self,
-        pipeline_name: str,
+        name: str,
         *,
         elapsed: float,
         stats: dict[str, int | str],
         extra_sections: dict[str, dict[str, int]] | None = None,
         style: str = "cyan",
     ) -> None:
-        """Print a unified pipeline summary.
+        """Print a unified summary.
 
         This is the preferred method for printing summaries.
-        Provides consistent formatting across all pipelines.
+        Provides consistent formatting across all tasks.
 
         Args:
-            pipeline_name: Name of the pipeline
+            name: Name of the task
             elapsed: Time elapsed in seconds
             stats: Main statistics as {label: value}
             extra_sections: Optional nested sections
@@ -301,7 +301,7 @@ class BasePipelineLogger(ABC):
         # Add elapsed time at the end
         rows.append(("Time elapsed", f"{elapsed:.1f}s"))
 
-        self._print_summary_table(f"{pipeline_name} Complete", rows, style=style)
+        self._print_summary_table(f"{name} Complete", rows, style=style)
 
     # -------------------------------------------------------------------------
     # Abstract Methods (must be implemented by subclasses)
@@ -309,5 +309,5 @@ class BasePipelineLogger(ABC):
 
     @abstractmethod
     def summary(self, **kwargs: Any) -> None:
-        """Print final summary. Implementation varies by pipeline."""
+        """Print final summary. Implementation varies by task."""
         ...

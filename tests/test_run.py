@@ -34,12 +34,12 @@ def settings() -> AppSettings:
 
 
 # ---------------------------------------------------------------------------
-# TestRunPipeline
+# TestRun
 # ---------------------------------------------------------------------------
 
 
-class TestRunPipeline:
-    """Tests for IngestOrchestrator._run_pipeline."""
+class TestRun:
+    """Tests for IngestOrchestrator._run."""
 
     @pytest.mark.asyncio
     @patch.object(IngestOrchestrator, "_process_single_channel", new_callable=AsyncMock)
@@ -51,7 +51,7 @@ class TestRunPipeline:
         orch = IngestOrchestrator.__new__(IngestOrchestrator)
         orch.settings = _make_settings()
 
-        await orch._run_pipeline(channel_id=999)
+        await orch._run(channel_id=999)
 
         mock_process_single.assert_awaited_once_with(999)
         mock_process_account.assert_not_awaited()
@@ -65,7 +65,7 @@ class TestRunPipeline:
         orch = IngestOrchestrator.__new__(IngestOrchestrator)
         orch.settings = _make_settings([acct1, acct2])
 
-        await orch._run_pipeline()
+        await orch._run()
 
         assert mock_process_account.await_count == 2
         mock_process_account.assert_any_await(acct1, None)

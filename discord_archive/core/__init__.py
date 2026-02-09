@@ -1,13 +1,13 @@
-"""Base orchestrator for pipeline execution.
+"""Base orchestrator for task execution.
 
-Provides common infrastructure for all pipeline orchestrators:
+Provides common infrastructure for all orchestrators:
 - Database engine and session management
 - Timing and statistics tracking
 - Common run() interface with guild/channel filtering
 
 Usage:
     class MyOrchestrator(BaseOrchestrator):
-        async def _run_pipeline(self, guild_id, channel_id):
+        async def _run(self, guild_id, channel_id):
             # Implementation
             pass
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 
 class BaseOrchestrator(ABC):
-    """Abstract base class for pipeline orchestrators.
+    """Abstract base class for orchestrators.
 
     Provides:
     - Database engine and session factory (cached)
@@ -39,7 +39,7 @@ class BaseOrchestrator(ABC):
     - Common run() method signature
 
     Subclasses must implement:
-    - _run_pipeline(): The actual pipeline logic
+    - _run(): The core logic
     - _log_summary(): Log final statistics
     """
 
@@ -59,7 +59,7 @@ class BaseOrchestrator(ABC):
     async def init_db(self) -> None:
         """Create tables if they don't exist.
 
-        Override this method to add pipeline-specific indexes
+        Override this method to add task-specific indexes
         or other database initialization.
         """
         async with self.engine.begin() as conn:
@@ -70,7 +70,7 @@ class BaseOrchestrator(ABC):
         guild_id: int | None = None,
         channel_id: int | None = None,
     ) -> None:
-        """Run the pipeline.
+        """Run the task.
 
         Args:
             guild_id: If provided, only process this guild.
@@ -80,7 +80,7 @@ class BaseOrchestrator(ABC):
 
         await self.init_db()
         try:
-            await self._run_pipeline(guild_id=guild_id, channel_id=channel_id)
+            await self._run(guild_id=guild_id, channel_id=channel_id)
 
             elapsed = time.time() - self.start_time
             self._log_summary(elapsed)
@@ -88,12 +88,12 @@ class BaseOrchestrator(ABC):
             await dispose_engines()
 
     @abstractmethod
-    async def _run_pipeline(
+    async def _run(
         self,
         guild_id: int | None = None,
         channel_id: int | None = None,
     ) -> None:
-        """Execute the pipeline logic.
+        """Execute the core logic.
 
         Args:
             guild_id: If provided, only process this guild.

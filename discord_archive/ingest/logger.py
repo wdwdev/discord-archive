@@ -1,4 +1,4 @@
-"""Rich-based logging utilities for Discord ingest pipeline.
+"""Rich-based logging utilities for Discord ingest.
 
 Provides beautiful console output with progress bars, live status updates,
 and color-coded messages for different event types.
@@ -8,13 +8,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from discord_archive.utils.pipeline_logger import BasePipelineLogger
+from discord_archive.utils.logger import BaseLogger
 
 
-class IngestLogger(BasePipelineLogger):
+class IngestLogger(BaseLogger):
     """Logger for Discord ingest operations with rich output.
 
-    Extends BasePipelineLogger with ingest-specific methods for
+    Extends BaseLogger with ingest-specific methods for
     guild, entity, and channel processing output.
     """
 

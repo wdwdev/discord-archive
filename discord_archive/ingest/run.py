@@ -1,4 +1,4 @@
-"""Main orchestration for Discord ingest pipeline.
+"""Main orchestration for Discord ingest.
 
 Coordinates guild, channel, and message ingestion across all accounts
 defined in config.json.
@@ -14,7 +14,7 @@ from discord_archive.ingest.logger import logger
 
 
 class IngestOrchestrator(BaseOrchestrator):
-    """Orchestrates the full ingest pipeline."""
+    """Orchestrates the full ingest process."""
 
     def __init__(self, settings: AppSettings) -> None:
         super().__init__(settings.database_url)
@@ -24,12 +24,12 @@ class IngestOrchestrator(BaseOrchestrator):
         self.channels_processed = 0
         self.messages_ingested = 0
 
-    async def _run_pipeline(
+    async def _run(
         self,
         guild_id: int | None = None,
         channel_id: int | None = None,
     ) -> None:
-        """Execute the ingest pipeline."""
+        """Execute the ingest logic."""
         if channel_id:
             await self._process_single_channel(channel_id)
         else:
@@ -110,7 +110,7 @@ async def run_ingest(
     guild_id: int | None = None,
     channel_id: int | None = None,
 ) -> None:
-    """Entry point for running the ingest pipeline."""
+    """Entry point for running the ingest."""
     settings = load_config(config_path)
     orchestrator = IngestOrchestrator(settings)
     await orchestrator.run(guild_id=guild_id, channel_id=channel_id)

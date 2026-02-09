@@ -23,7 +23,7 @@ from discord_archive.utils.logging import setup_logging
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Discord Archive Ingest Pipeline",
+        description="Discord Archive Ingest",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
