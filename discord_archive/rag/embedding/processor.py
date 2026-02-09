@@ -75,6 +75,7 @@ class EmbeddingStats:
     """Statistics from an embedding run."""
 
     chunks_processed: int = 0
+    tokens_processed: int = 0
     chunks_skipped: int = 0
 
 
@@ -92,22 +93,24 @@ class EmbeddingProcessor:
     def __init__(self, config: EmbeddingConfig) -> None:
         self.config = config
 
-    async def process_channel(
+    async def process(
         self,
         session: AsyncSession,
-        channel_id: int,
         model: EmbeddingModel,
         lancedb_store: LanceDBStore,
         progress_callback: Callable[[int], None] | None = None,
+        guild_id: int | None = None,
+        channel_id: int | None = None,
     ) -> EmbeddingStats:
-        """Process all pending chunks for a channel.
+        """Process all pending chunks, globally sorted by token count.
 
         Args:
             session: Database session.
-            channel_id: Channel to process.
             model: Loaded embedding model.
             lancedb_store: Connected LanceDB store.
-            progress_callback: Optional callback(chunks_embedded_so_far).
+            progress_callback: Optional callback(tokens_processed_so_far).
+            guild_id: If provided, only process this guild.
+            channel_id: If provided, only process this channel.
 
         Returns:
             EmbeddingStats with counts of processed/skipped chunks.
@@ -131,7 +134,8 @@ class EmbeddingProcessor:
         try:
             while True:
                 rows = await self._fetch_pending_chunks(
-                    session, channel_id, last_token_count, last_chunk_id
+                    session, last_token_count, last_chunk_id,
+                    guild_id=guild_id, channel_id=channel_id,
                 )
                 if not rows:
                     break
@@ -185,8 +189,9 @@ class EmbeddingProcessor:
                     all_vectors.append(vectors)
                     all_rows.extend(batch)
                     stats.chunks_processed += len(batch)
+                    stats.tokens_processed += sum(r.token_count for r in batch)
                     if progress_callback:
-                        progress_callback(stats.chunks_processed)
+                        progress_callback(stats.tokens_processed)
 
                 # Finalize previous flush (should already be done
                 # since encoding above took ~25s, overlapping the
@@ -291,18 +296,19 @@ class EmbeddingProcessor:
     async def _fetch_pending_chunks(
         self,
         session: AsyncSession,
-        channel_id: int,
         last_token_count: int,
         last_chunk_id: int,
+        *,
+        guild_id: int | None = None,
+        channel_id: int | None = None,
     ) -> list[_PendingChunkRow]:
         """Fetch pending chunks joined with their texts, ordered by token count.
 
         Uses a composite cursor (token_count, chunk_id) so each DB batch
-        contains similarly-sized chunks, eliminating the need for a
-        Python-side sort before GPU batching.
+        contains similarly-sized chunks globally across all channels.
 
         Returns lightweight dataclass rows (not ORM objects).
-        Skips chunks that have no text in chunk_texts.
+        Skips chunks that have no text in chunk_texts or exceed max_length.
         """
         stmt = (
             select(
@@ -319,7 +325,6 @@ class EmbeddingProcessor:
                 Chunk.last_message_at,
             )
             .join(ChunkText, Chunk.chunk_id == ChunkText.chunk_id)
-            .where(Chunk.channel_id == channel_id)
             .where(Chunk.embedding_status == STATUS_PENDING)
             .where(ChunkText.token_count <= self.config.model.max_length)
             .where(
@@ -332,6 +337,10 @@ class EmbeddingProcessor:
             .order_by(ChunkText.token_count, Chunk.chunk_id)
             .limit(self.config.db_batch_size)
         )
+        if guild_id is not None:
+            stmt = stmt.where(Chunk.guild_id == guild_id)
+        if channel_id is not None:
+            stmt = stmt.where(Chunk.channel_id == channel_id)
         result = await session.execute(stmt)
         return [
             _PendingChunkRow(

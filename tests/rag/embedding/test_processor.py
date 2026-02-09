@@ -256,7 +256,7 @@ class TestFetchPendingChunks:
         session = AsyncMock()
         session.execute.return_value = mock_result
 
-        rows = await processor._fetch_pending_chunks(session, 200, 0, 0)
+        rows = await processor._fetch_pending_chunks(session, 0, 0)
 
         assert len(rows) == 1
         assert rows[0].chunk_id == 1
@@ -274,12 +274,12 @@ class TestFetchPendingChunks:
         session = AsyncMock()
         session.execute.return_value = mock_result
 
-        rows = await processor._fetch_pending_chunks(session, 200, 0, 0)
+        rows = await processor._fetch_pending_chunks(session, 0, 0)
         assert rows == []
 
 
 class TestAdaptiveBatching:
-    """Tests for adaptive OOM handling in process_channel."""
+    """Tests for adaptive OOM handling in process."""
 
     @pytest.mark.asyncio
     async def test_oom_reduces_budget_for_remaining(self) -> None:
@@ -310,8 +310,8 @@ class TestAdaptiveBatching:
         )
 
         with patch("torch.cuda.empty_cache"):
-            result = await processor.process_channel(
-                session, 200, model, lancedb_store,
+            result = await processor.process(
+                session, model, lancedb_store,
             )
 
         assert result.chunks_processed == 8
@@ -367,8 +367,8 @@ class TestAdaptiveBatching:
         )
 
         with patch("torch.cuda.empty_cache"):
-            result = await processor.process_channel(
-                session, 200, model, lancedb_store,
+            result = await processor.process(
+                session, model, lancedb_store,
             )
 
         assert result.chunks_processed == 7
@@ -399,8 +399,8 @@ class TestAdaptiveBatching:
         )
 
         with patch("torch.cuda.empty_cache"):
-            result = await processor.process_channel(
-                session, 200, model, lancedb_store,
+            result = await processor.process(
+                session, model, lancedb_store,
             )
 
         assert result.chunks_processed == 0
@@ -428,16 +428,18 @@ class TestAdaptiveBatching:
             side_effect=[rows, []]
         )
 
-        result = await processor.process_channel(
-            session, 200, model, lancedb_store, progress_callback=callback,
+        result = await processor.process(
+            session, model, lancedb_store, progress_callback=callback,
         )
 
         assert result.chunks_processed == 4
+        assert result.tokens_processed == 400
         assert model.encode_documents.call_count == 2
         lancedb_store.add.assert_called_once()
         assert callback.call_count == 2
-        callback.assert_any_call(2)
-        callback.assert_any_call(4)
+        # Callback reports cumulative tokens (100 tok/chunk × 2 chunks/batch)
+        callback.assert_any_call(200)
+        callback.assert_any_call(400)
 
     @pytest.mark.asyncio
     async def test_oom_cascading_reduction(self) -> None:
@@ -470,8 +472,8 @@ class TestAdaptiveBatching:
         )
 
         with patch("torch.cuda.empty_cache"):
-            result = await processor.process_channel(
-                session, 200, model, lancedb_store,
+            result = await processor.process(
+                session, model, lancedb_store,
             )
 
         assert result.chunks_processed == 8
@@ -482,7 +484,7 @@ class TestAdaptiveBatching:
 
 
 class TestGracefulShutdown:
-    """Tests for Ctrl+C graceful shutdown in process_channel."""
+    """Tests for Ctrl+C graceful shutdown in process."""
 
     @pytest.mark.asyncio
     async def test_interrupt_saves_in_flight_flush(self) -> None:
@@ -510,8 +512,8 @@ class TestGracefulShutdown:
         )
 
         with pytest.raises(KeyboardInterrupt):
-            await processor.process_channel(
-                session, 200, model, lancedb_store,
+            await processor.process(
+                session, model, lancedb_store,
             )
 
         # batch1 was submitted to LanceDB and should be marked embedded
@@ -546,8 +548,8 @@ class TestGracefulShutdown:
         )
 
         with pytest.raises(KeyboardInterrupt):
-            await processor.process_channel(
-                session, 200, model, lancedb_store,
+            await processor.process(
+                session, model, lancedb_store,
             )
 
         # The 2 successfully encoded rows should be flushed
@@ -576,6 +578,6 @@ class TestGracefulShutdown:
         )
 
         with pytest.raises(KeyboardInterrupt):
-            await processor.process_channel(
-                session, 200, model, lancedb_store,
+            await processor.process(
+                session, model, lancedb_store,
             )

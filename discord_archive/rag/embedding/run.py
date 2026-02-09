@@ -10,17 +10,15 @@ import time
 
 from rich.progress import (
     BarColumn,
-    MofNCompleteColumn,
     Progress,
     SpinnerColumn,
     TextColumn,
     TimeElapsedColumn,
     TimeRemainingColumn,
 )
-from sqlalchemy import distinct, func, select
+from sqlalchemy import func, select
 
 from discord_archive.core import BaseOrchestrator
-from discord_archive.db.models.channel import Channel
 from discord_archive.db.models.chunk import Chunk
 from discord_archive.db.models.chunk_text import ChunkText
 from discord_archive.rag.embedding.lancedb_store import LanceDBStore
@@ -37,7 +35,7 @@ class EmbeddingOrchestrator(BaseOrchestrator):
     """Orchestrator for embedding.
 
     Loads the embedding model, connects to LanceDB, and processes
-    pending chunks across guilds/channels.
+    all pending chunks globally sorted by token count.
     """
 
     def __init__(
@@ -48,10 +46,6 @@ class EmbeddingOrchestrator(BaseOrchestrator):
         super().__init__(database_url)
         self.config = config or EmbeddingConfig.default()
         self.processor = EmbeddingProcessor(self.config)
-
-        # Statistics
-        self.guilds_processed = 0
-        self.channels_processed = 0
         self.chunks_embedded = 0
 
     async def _run(
@@ -61,9 +55,26 @@ class EmbeddingOrchestrator(BaseOrchestrator):
     ) -> None:
         """Execute embedding.
 
-        Loads the model, connects to LanceDB, then processes
-        channels. Model is unloaded in a finally block.
+        Loads the model, connects to LanceDB, then processes all
+        pending chunks in one pass sorted by token count.
+        Model is unloaded in a finally block.
         """
+        async with self.async_session() as session:
+            chunk_count, total_tokens, oversized = await self._get_pending_stats(
+                session, guild_id=guild_id, channel_id=channel_id
+            )
+
+        if oversized:
+            logger.warning(
+                f"{oversized} chunks exceed max_length "
+                f"({self.config.model.max_length}) — skipped"
+            )
+        if chunk_count == 0:
+            logger.info("No pending chunks to embed")
+            return
+
+        logger.info(f"{chunk_count:,} chunks ({total_tokens:,} tokens) to embed")
+
         logger.model_loading()
         t0 = time.time()
         model = EmbeddingModel(self.config.model)
@@ -73,156 +84,83 @@ class EmbeddingOrchestrator(BaseOrchestrator):
         lancedb_store = LanceDBStore(self.config.lancedb_data_dir)
         lancedb_store.connect()
 
-        try:
-            async with self.async_session() as session:
-                if channel_id is not None:
-                    stmt = select(Channel.guild_id, Channel.name).where(
-                        Channel.channel_id == channel_id
-                    )
-                    result = await session.execute(stmt)
-                    row = result.first()
-                    if row:
-                        await self._process_channel(
-                            session,
-                            channel_id,
-                            row.name or f"Channel {channel_id}",
-                            model,
-                            lancedb_store,
-                        )
-                elif guild_id is not None:
-                    await self._process_guild(
-                        session, guild_id, model, lancedb_store
-                    )
-                else:
-                    guilds = await self._get_guilds_with_pending(session)
-                    for gid in guilds:
-                        await self._process_guild(
-                            session, gid, model, lancedb_store
-                        )
-        finally:
-            model.unload()
-
-    async def _get_guilds_with_pending(self, session) -> list[int]:
-        """Get guild IDs that have pending chunks."""
-        stmt = (
-            select(distinct(Chunk.guild_id))
-            .where(Chunk.embedding_status == STATUS_PENDING)
-        )
-        result = await session.scalars(stmt)
-        return list(result.all())
-
-    async def _process_guild(
-        self, session, guild_id: int, model: EmbeddingModel, lancedb_store: LanceDBStore
-    ) -> None:
-        """Process all channels with pending chunks in a guild."""
-        from discord_archive.db.models.guild import Guild
-
-        stmt = select(Guild.name).where(Guild.guild_id == guild_id)
-        result = await session.execute(stmt)
-        row = result.first()
-        guild_name = row.name if row else f"Guild {guild_id}"
-
-        logger.guild_start(guild_id, guild_name)
-        self.guilds_processed += 1
-
-        channels = await self._get_channels_with_pending(session, guild_id)
-        for ch_id, ch_name in channels:
-            await self._process_channel(
-                session, ch_id, ch_name, model, lancedb_store
-            )
-
-    async def _get_channels_with_pending(
-        self, session, guild_id: int
-    ) -> list[tuple[int, str]]:
-        """Get channels with pending chunks in a guild."""
-        stmt = (
-            select(Channel.channel_id, Channel.name)
-            .where(Channel.guild_id == guild_id)
-            .where(
-                Channel.channel_id.in_(
-                    select(distinct(Chunk.channel_id))
-                    .where(Chunk.guild_id == guild_id)
-                    .where(Chunk.embedding_status == STATUS_PENDING)
-                )
-            )
-        )
-        result = await session.execute(stmt)
-        return [(row[0], row[1] or f"Channel {row[0]}") for row in result.all()]
-
-    async def _get_pending_count(
-        self, session, channel_id: int
-    ) -> tuple[int, int]:
-        """Get count of pending chunks that are ready for embedding.
-
-        Returns:
-            (embeddable_count, oversized_count) where oversized chunks
-            exceed the model's max sequence length.
-        """
-        base = (
-            select(func.count(Chunk.chunk_id))
-            .join(ChunkText, Chunk.chunk_id == ChunkText.chunk_id)
-            .where(Chunk.channel_id == channel_id)
-            .where(Chunk.embedding_status == STATUS_PENDING)
-        )
-        total = await session.scalar(base) or 0
-        embeddable = await session.scalar(
-            base.where(ChunkText.token_count <= self.config.model.max_length)
-        ) or 0
-        return embeddable, total - embeddable
-
-    async def _process_channel(
-        self,
-        session,
-        channel_id: int,
-        channel_name: str,
-        model: EmbeddingModel,
-        lancedb_store: LanceDBStore,
-    ) -> None:
-        """Process a single channel."""
-        pending_count, oversized = await self._get_pending_count(session, channel_id)
-        logger.channel_start(channel_name, channel_id, pending_count)
-        if oversized:
-            logger.warning(
-                f"{oversized} chunks exceed max_length "
-                f"({self.config.model.max_length}) — skipped"
-            )
-
-        if pending_count == 0:
-            logger.channel_empty(channel_name)
-            return
-
         progress = Progress(
             SpinnerColumn(),
-            TextColumn("    [progress.description]{task.description}"),
+            TextColumn("[progress.description]{task.description}"),
             BarColumn(),
-            MofNCompleteColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             TimeElapsedColumn(),
             TimeRemainingColumn(),
             console=logger.console,
             speed_estimate_period=300,
         )
 
-        with progress:
-            task_id = progress.add_task("Embedding", total=pending_count)
+        try:
+            async with self.async_session() as session:
+                with progress:
+                    task_id = progress.add_task("Embedding", total=total_tokens)
 
-            def on_progress(chunks_embedded: int) -> None:
-                progress.update(task_id, completed=chunks_embedded)
+                    def on_progress(tokens_processed: int) -> None:
+                        progress.update(task_id, completed=tokens_processed)
 
-            stats = await self.processor.process_channel(
-                session, channel_id, model, lancedb_store, progress_callback=on_progress
+                    stats = await self.processor.process(
+                        session, model, lancedb_store,
+                        progress_callback=on_progress,
+                        guild_id=guild_id, channel_id=channel_id,
+                    )
+
+            self.chunks_embedded = stats.chunks_processed
+        finally:
+            model.unload()
+
+    async def _get_pending_stats(
+        self,
+        session,
+        *,
+        guild_id: int | None = None,
+        channel_id: int | None = None,
+    ) -> tuple[int, int, int]:
+        """Get global stats for pending chunks ready for embedding.
+
+        Returns:
+            (chunk_count, total_tokens, oversized_count) where
+            chunk_count and total_tokens only include embeddable chunks,
+            and oversized_count is chunks exceeding max sequence length.
+        """
+        base = (
+            select(func.count(Chunk.chunk_id))
+            .join(ChunkText, Chunk.chunk_id == ChunkText.chunk_id)
+            .where(Chunk.embedding_status == STATUS_PENDING)
+        )
+        if guild_id is not None:
+            base = base.where(Chunk.guild_id == guild_id)
+        if channel_id is not None:
+            base = base.where(Chunk.channel_id == channel_id)
+
+        total_chunks = await session.scalar(base) or 0
+
+        size_filter = ChunkText.token_count <= self.config.model.max_length
+        embeddable = await session.scalar(base.where(size_filter)) or 0
+
+        total_tokens = await session.scalar(
+            select(func.sum(ChunkText.token_count))
+            .join(Chunk, Chunk.chunk_id == ChunkText.chunk_id)
+            .where(Chunk.embedding_status == STATUS_PENDING)
+            .where(size_filter)
+            .where(
+                (Chunk.guild_id == guild_id) if guild_id is not None else True
             )
+            .where(
+                (Chunk.channel_id == channel_id) if channel_id is not None else True
+            )
+        ) or 0
 
-        self.channels_processed += 1
-        self.chunks_embedded += stats.chunks_processed
-
-        logger.channel_complete(channel_name, stats.chunks_processed)
+        return embeddable, total_tokens, total_chunks - embeddable
 
     def _log_summary(self, elapsed: float) -> None:
         """Log the final summary."""
         logger.summary(
             elapsed=elapsed,
-            guilds=self.guilds_processed,
-            channels=self.channels_processed,
             chunks_embedded=self.chunks_embedded,
         )
 
