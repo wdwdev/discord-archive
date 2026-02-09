@@ -151,16 +151,24 @@ class EmbeddingOrchestrator(BaseOrchestrator):
 
     async def _get_pending_count(
         self, session, channel_id: int
-    ) -> int:
-        """Get count of pending chunks that have text ready for embedding."""
-        stmt = (
+    ) -> tuple[int, int]:
+        """Get count of pending chunks that are ready for embedding.
+
+        Returns:
+            (embeddable_count, oversized_count) where oversized chunks
+            exceed the model's max sequence length.
+        """
+        base = (
             select(func.count(Chunk.chunk_id))
             .join(ChunkText, Chunk.chunk_id == ChunkText.chunk_id)
             .where(Chunk.channel_id == channel_id)
             .where(Chunk.embedding_status == STATUS_PENDING)
         )
-        result = await session.scalar(stmt)
-        return result or 0
+        total = await session.scalar(base) or 0
+        embeddable = await session.scalar(
+            base.where(ChunkText.token_count <= self.config.model.max_length)
+        ) or 0
+        return embeddable, total - embeddable
 
     async def _process_channel(
         self,
@@ -171,8 +179,13 @@ class EmbeddingOrchestrator(BaseOrchestrator):
         lancedb_store: LanceDBStore,
     ) -> None:
         """Process a single channel."""
-        pending_count = await self._get_pending_count(session, channel_id)
+        pending_count, oversized = await self._get_pending_count(session, channel_id)
         logger.channel_start(channel_name, channel_id, pending_count)
+        if oversized:
+            logger.warning(
+                f"{oversized} chunks exceed max_length "
+                f"({self.config.model.max_length}) — skipped"
+            )
 
         if pending_count == 0:
             logger.channel_empty(channel_name)

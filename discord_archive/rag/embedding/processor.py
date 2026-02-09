@@ -113,6 +113,7 @@ class EmbeddingProcessor:
             EmbeddingStats with counts of processed/skipped chunks.
         """
         stats = EmbeddingStats()
+        last_token_count = 0
         last_chunk_id = 0
         effective_budget = self.config.token_budget
 
@@ -130,13 +131,10 @@ class EmbeddingProcessor:
         try:
             while True:
                 rows = await self._fetch_pending_chunks(
-                    session, channel_id, last_chunk_id
+                    session, channel_id, last_token_count, last_chunk_id
                 )
                 if not rows:
                     break
-
-                # Sort by token count for efficient GPU batching
-                rows.sort(key=lambda r: r.token_count)
 
                 # Encode all mini-batches (GPU work runs while the
                 # previous LanceDB write completes in background).
@@ -209,7 +207,8 @@ class EmbeddingProcessor:
                     all_rows = []
                     all_vectors = []
 
-                last_chunk_id = max(r.chunk_id for r in rows)
+                last_token_count = rows[-1].token_count
+                last_chunk_id = rows[-1].chunk_id
 
             # Finalize the last flush
             await self._finalize_flush(prev_flush, session, prev_chunk_ids)
@@ -293,9 +292,14 @@ class EmbeddingProcessor:
         self,
         session: AsyncSession,
         channel_id: int,
+        last_token_count: int,
         last_chunk_id: int,
     ) -> list[_PendingChunkRow]:
-        """Fetch pending chunks joined with their texts.
+        """Fetch pending chunks joined with their texts, ordered by token count.
+
+        Uses a composite cursor (token_count, chunk_id) so each DB batch
+        contains similarly-sized chunks, eliminating the need for a
+        Python-side sort before GPU batching.
 
         Returns lightweight dataclass rows (not ORM objects).
         Skips chunks that have no text in chunk_texts.
@@ -317,8 +321,15 @@ class EmbeddingProcessor:
             .join(ChunkText, Chunk.chunk_id == ChunkText.chunk_id)
             .where(Chunk.channel_id == channel_id)
             .where(Chunk.embedding_status == STATUS_PENDING)
-            .where(Chunk.chunk_id > last_chunk_id)
-            .order_by(Chunk.chunk_id)
+            .where(ChunkText.token_count <= self.config.model.max_length)
+            .where(
+                (ChunkText.token_count > last_token_count)
+                | (
+                    (ChunkText.token_count == last_token_count)
+                    & (Chunk.chunk_id > last_chunk_id)
+                )
+            )
+            .order_by(ChunkText.token_count, Chunk.chunk_id)
             .limit(self.config.db_batch_size)
         )
         result = await session.execute(stmt)

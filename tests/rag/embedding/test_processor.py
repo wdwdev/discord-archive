@@ -256,7 +256,7 @@ class TestFetchPendingChunks:
         session = AsyncMock()
         session.execute.return_value = mock_result
 
-        rows = await processor._fetch_pending_chunks(session, 200, 0)
+        rows = await processor._fetch_pending_chunks(session, 200, 0, 0)
 
         assert len(rows) == 1
         assert rows[0].chunk_id == 1
@@ -274,7 +274,7 @@ class TestFetchPendingChunks:
         session = AsyncMock()
         session.execute.return_value = mock_result
 
-        rows = await processor._fetch_pending_chunks(session, 200, 0)
+        rows = await processor._fetch_pending_chunks(session, 200, 0, 0)
         assert rows == []
 
 
