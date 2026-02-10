@@ -11,11 +11,14 @@ import time
 from rich.progress import (
     BarColumn,
     Progress,
+    ProgressColumn,
     SpinnerColumn,
+    Task,
     TextColumn,
     TimeElapsedColumn,
     TimeRemainingColumn,
 )
+from rich.text import Text
 from sqlalchemy import func, select
 
 from discord_archive.core import BaseOrchestrator
@@ -29,6 +32,22 @@ from discord_archive.rag.embedding.processor import (
     EmbeddingConfig,
     EmbeddingProcessor,
 )
+
+
+class ChunkSpeedColumn(ProgressColumn):
+    """Custom column to display chunk processing speed, handling None values."""
+
+    def render(self, task: Task) -> Text:
+        """Render the speed with proper None handling."""
+        # Always use current speed (it persists after completion)
+        speed = task.speed
+
+        # If no speed calculated yet, show placeholder
+        if speed is None:
+            return Text("     -- chunks/s", style="dim cyan")
+
+        # Show speed with proper formatting
+        return Text(f"{speed:>6.0f} chunks/s", style="cyan")
 
 
 class EmbeddingOrchestrator(BaseOrchestrator):
@@ -89,19 +108,22 @@ class EmbeddingOrchestrator(BaseOrchestrator):
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TextColumn("•"),
+            TextColumn("{task.completed}/{task.total} chunks"),
+            TextColumn("•"),
+            ChunkSpeedColumn(),
             TimeElapsedColumn(),
             TimeRemainingColumn(),
             console=logger.console,
-            speed_estimate_period=300,
         )
 
         try:
             async with self.async_session() as session:
                 with progress:
-                    task_id = progress.add_task("Embedding", total=total_tokens)
+                    task_id = progress.add_task("Embedding", total=chunk_count)
 
-                    def on_progress(tokens_processed: int) -> None:
-                        progress.update(task_id, completed=tokens_processed)
+                    def on_progress(chunks_processed: int) -> None:
+                        progress.update(task_id, completed=chunks_processed)
 
                     stats = await self.processor.process(
                         session, model, lancedb_store,
