@@ -51,6 +51,7 @@ from discord_archive.rag.chunking.text_builder import (
     MessageContext,
     TextBuilder,
 )
+from discord_archive.rag.chunking.tokenizer import get_tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,9 @@ class ChunkingProcessor:
         self.author_group = AuthorGroupChunker(self.config.author_group)
         self.reply_chain = ReplyChainChunker(self.config.reply_chain)
         self.text_builder = TextBuilder()
+
+        # Pre-load tokenizer to avoid first-batch overhead
+        get_tokenizer()
 
     async def process_channel(
         self,

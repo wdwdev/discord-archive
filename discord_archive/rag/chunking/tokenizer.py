@@ -60,7 +60,7 @@ def estimate_tokens(text: str) -> int:
 def truncate_to_tokens(text: str, max_tokens: int) -> str:
     """Truncate text to fit within max_tokens using tokenizer.
 
-    Uses binary search for efficiency. Appends "..." if truncated.
+    Truncates at token boundaries for efficiency. Appends "..." if truncated.
 
     Args:
         text: Text to truncate
@@ -69,26 +69,17 @@ def truncate_to_tokens(text: str, max_tokens: int) -> str:
     Returns:
         Truncated text (with "..." if truncated)
     """
-    current_tokens = estimate_tokens(text)
-    if current_tokens <= max_tokens:
+    tokenizer = get_tokenizer()
+    tokens = tokenizer.encode(text, add_special_tokens=False)
+
+    if len(tokens) <= max_tokens:
         return text
 
-    # Binary search for the right character cutoff
-    left, right = 0, len(text)
-    result = text[:right]
+    # Truncate tokens directly, then decode
+    truncated_tokens = tokens[:max_tokens]
+    truncated_text = tokenizer.decode(truncated_tokens, skip_special_tokens=True)
 
-    while left < right:
-        mid = (left + right + 1) // 2
-        candidate = text[:mid] + "..."
-        tokens = estimate_tokens(candidate)
-
-        if tokens <= max_tokens:
-            left = mid
-            result = candidate
-        else:
-            right = mid - 1
-
-    return result
+    return truncated_text + "..."
 
 
 def estimate_message_context_tokens(
