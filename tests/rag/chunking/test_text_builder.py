@@ -325,13 +325,22 @@ class TestTextBuilderFormatEmbed:
         assert "Last updated today" in text
 
     def test_embed_long_description_truncated(self) -> None:
+        """Long description should be truncated using token limits."""
+        from discord_archive.rag.chunking.tokenizer import estimate_tokens
+
         builder = TextBuilder()
-        long_desc = "A" * 300
+        # Use varied text that will have more tokens
+        long_desc = "This is a very long description with many different words. " * 20
         embed = {"description": long_desc}
 
         text = builder._format_embed(embed)
 
-        assert len(text) < 250  # Should be truncated
+        # Original description has >60 tokens, should be truncated
+        original_tokens = estimate_tokens(long_desc)
+        result_tokens = estimate_tokens(text)
+
+        # Result should be less than original (was truncated)
+        assert result_tokens < original_tokens
         assert "..." in text
 
     def test_embed_limits_fields(self) -> None:

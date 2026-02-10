@@ -3,12 +3,18 @@
 Creates chunks for reply chains, tracing from leaf message back to root.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from discord_archive.db.models.chunk import Chunk
 from discord_archive.db.models.message import Message
-from discord_archive.rag.chunking.constants import THREAD_STARTER_MESSAGE_TYPE
-from discord_archive.rag.chunking.tokenizer import estimate_tokens
+from discord_archive.rag.chunking.constants import MAX_CHUNK_TOKENS, THREAD_STARTER_MESSAGE_TYPE
+from discord_archive.rag.chunking.tokenizer import estimate_message_context_tokens
+
+if TYPE_CHECKING:
+    from discord_archive.db.models.attachment import Attachment
 
 
 @dataclass
@@ -38,6 +44,8 @@ class ReplyChainChunker:
         message_lookup: dict[int, Message],
         guild_id: int,
         channel_id: int,
+        usernames: dict[int, str] | None = None,
+        attachments_by_msg: dict[int, list["Attachment"]] | None = None,
     ) -> Chunk | None:
         """Process a single message and create a reply chain chunk if applicable.
 
@@ -46,10 +54,17 @@ class ReplyChainChunker:
             message_lookup: Dict of message_id -> Message for chain traversal
             guild_id: Guild ID for the chunk
             channel_id: Channel ID for the chunk
+            usernames: author_id -> username mapping (for token estimation)
+            attachments_by_msg: message_id -> attachments list mapping (for token estimation)
 
         Returns:
             A Chunk if this message is a reply, None otherwise.
         """
+        if usernames is None:
+            usernames = {}
+        if attachments_by_msg is None:
+            attachments_by_msg = {}
+
         # Skip if not a reply
         if not message.referenced_message_id:
             return None
@@ -60,7 +75,7 @@ class ReplyChainChunker:
 
         # Build the chain
         chain, cross_channel_ref = self._build_chain(
-            message, message_lookup, channel_id
+            message, message_lookup, channel_id, usernames, attachments_by_msg
         )
 
         # Filter out thread starters from chain
@@ -98,6 +113,8 @@ class ReplyChainChunker:
         leaf_message: Message,
         message_lookup: dict[int, Message],
         channel_id: int,
+        usernames: dict[int, str],
+        attachments_by_msg: dict[int, list["Attachment"]],
     ) -> tuple[list[Message], int | None]:
         """Build the reply chain from root to leaf.
 
@@ -126,7 +143,21 @@ class ReplyChainChunker:
 
             # Add to chain (will reverse later)
             chain.append(current)
-            total_tokens += estimate_tokens(current.content or "")
+
+            # Token estimation
+            username = usernames.get(current.author_id)
+            attachments = attachments_by_msg.get(current.message_id, [])
+            message_tokens = estimate_message_context_tokens(current, username, attachments)
+            total_tokens += message_tokens
+
+            # Check absolute maximum first
+            if total_tokens > MAX_CHUNK_TOKENS:
+                import logging
+                logging.warning(
+                    f"Reply chain exceeds MAX_CHUNK_TOKENS={MAX_CHUNK_TOKENS} at {total_tokens} tokens, "
+                    f"discarding entire chain starting from message {leaf_message.message_id}"
+                )
+                return [], None
 
             # Check limits
             if len(chain) >= self.config.max_depth:

@@ -3,12 +3,14 @@
 Builds formatted text representations of chunks for embedding.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 from discord_archive.db.models.attachment import Attachment
 from discord_archive.db.models.chunk import Chunk
 from discord_archive.db.models.message import Message
-from discord_archive.rag.chunking.tokenizer import estimate_tokens
+from discord_archive.rag.chunking.tokenizer import estimate_tokens, truncate_to_tokens
 
 # Extension to label mapping
 EXTENSION_LABELS: dict[str, str] = {
@@ -238,6 +240,8 @@ class TextBuilder:
 
         Extracts: title, description, author.name, fields[].name+value, footer.text
         Format: [Embed: "Title" - Description... | Field: value | ...]
+
+        Uses token-based truncation for accuracy.
         """
         parts: list[str] = []
 
@@ -253,14 +257,13 @@ class TextBuilder:
             if author_name:
                 parts.append(f"by {author_name}")
 
-        # Description (truncate if long)
+        # Description (truncate to ~60 tokens, roughly equivalent to 200 chars)
         description = embed.get("description")
         if description:
-            if len(description) > 200:
-                description = description[:197] + "..."
+            description = truncate_to_tokens(description, 60)
             parts.append(description)
 
-        # Fields
+        # Fields (first 5, value truncated to ~30 tokens)
         fields = embed.get("fields")
         if fields and isinstance(fields, list):
             for field in fields[:5]:  # Limit to first 5 fields
@@ -268,8 +271,7 @@ class TextBuilder:
                     name = field.get("name", "")
                     value = field.get("value", "")
                     if name and value:
-                        if len(value) > 100:
-                            value = value[:97] + "..."
+                        value = truncate_to_tokens(value, 30)
                         parts.append(f"{name}: {value}")
 
         # Footer

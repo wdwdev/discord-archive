@@ -249,7 +249,7 @@ class TestSlidingWindowChunker:
             last_message_at=messages[-1].created_at,
         )
 
-        state = chunker.load_state(chunk, messages)
+        state = chunker.load_state(chunk, messages, {}, {})
 
         assert state.chunk is chunk
         assert len(state.messages) == 2

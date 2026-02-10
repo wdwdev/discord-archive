@@ -77,7 +77,7 @@ class TestAuthorGroupState:
             first_message_at=now,
             last_message_at=now,
         )
-        state.set_author_chunk(123, chunk, [], 0, now)
+        state.set_author_chunk(123, chunk, [], {}, 0, now)
 
         result = state.get_author_chunk(123)
         assert result is not None
@@ -100,7 +100,7 @@ class TestAuthorGroupState:
             first_message_at=now,
             last_message_at=now,
         )
-        state.set_author_chunk(123, chunk, [], 0, now)
+        state.set_author_chunk(123, chunk, [], {}, 0, now)
 
         state.remove_author_chunk(123)
         assert state.get_author_chunk(123) is None
@@ -305,6 +305,8 @@ class TestAuthorGroupChunker:
         state = chunker.load_state(
             chunks={100: chunk},
             messages_by_author={100: messages},
+            usernames={},
+            attachments_by_msg={},
         )
 
         result = state.get_author_chunk(100)

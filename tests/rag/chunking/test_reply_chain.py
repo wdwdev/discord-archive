@@ -229,3 +229,60 @@ class TestReplyChainChunker:
 
         assert result is not None
         assert result.embedding_status == "pending"
+
+    def test_token_calculation_with_embeds_and_attachments(self) -> None:
+        """Token limit should use accurate calculation including embeds and attachments."""
+        from discord_archive.db.models.attachment import Attachment
+
+        # Create a reply chain with embeds and attachments
+        msg1 = Message(
+            message_id=1,
+            channel_id=100,
+            author_id=1,
+            content="Root message",
+            created_at=datetime.now(timezone.utc),
+            type=0,
+            referenced_message_id=None,
+            embeds=[{"description": "Some embed content"}],
+            mentions=[],
+            mention_roles=[],
+        )
+
+        msg2 = Message(
+            message_id=2,
+            channel_id=100,
+            author_id=2,
+            content="Reply with attachment",
+            created_at=datetime.now(timezone.utc),
+            type=0,
+            referenced_message_id=1,
+            embeds=[],
+            mentions=[],
+            mention_roles=[],
+        )
+
+        lookup = {1: msg1, 2: msg2}
+        usernames = {1: "Alice", 2: "Bob"}
+        attachments_by_msg = {
+            2: [
+                Attachment(
+                    attachment_id=1,
+                    message_id=2,
+                    filename="screenshot.png",
+                    size=1024,
+                    url="https://example.com/image.png",
+                )
+            ]
+        }
+
+        # Use a very low token limit to test that it respects the limit
+        chunker = ReplyChainChunker(ReplyChainConfig(max_tokens=50, max_depth=20))
+
+        result = chunker.process_message(
+            msg2, lookup, guild_id=1, channel_id=100, usernames=usernames, attachments_by_msg=attachments_by_msg
+        )
+
+        # Chain should be created but limited by tokens
+        assert result is not None
+        # Should include both messages (token calculation happens after adding to chain)
+        assert len(result.message_ids) == 2

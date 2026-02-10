@@ -3,6 +3,9 @@
 Coordinates the three chunkers and persists results to database.
 """
 
+from __future__ import annotations
+
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -137,7 +140,7 @@ class ChunkingProcessor:
 
             # Process batch and collect chunks to persist
             batch_stats, chunks_to_persist = await self._process_batch(
-                messages, message_lookup, guild_id, channel_id, sw_state, ag_state
+                session, messages, message_lookup, guild_id, channel_id, sw_state, ag_state
             )
 
             # Batch persist all chunks and build texts
@@ -172,6 +175,7 @@ class ChunkingProcessor:
 
     async def _process_batch(
         self,
+        session: AsyncSession,
         messages: list[Message],
         message_lookup: dict[int, Message],
         guild_id: int,
@@ -186,6 +190,16 @@ class ChunkingProcessor:
         """
         stats = ChunkingStats()
 
+        # Preload context for token estimation
+        author_ids = list(set(m.author_id for m in messages))
+        message_ids = [m.message_id for m in messages]
+
+        # Fetch usernames and attachments in parallel
+        usernames, attachments_by_msg = await asyncio.gather(
+            self._fetch_users_for_authors(session, author_ids),
+            self._fetch_attachments_for_messages(session, message_ids),
+        )
+
         # Track unique chunks by their identity key
         # For sliding_window/author_group: (chunk_type, channel_id, start_message_id)
         # For reply_chain: (chunk_type, leaf_message_id)
@@ -195,9 +209,13 @@ class ChunkingProcessor:
         for message in messages:
             stats.messages_processed += 1
 
+            # Get context for this message
+            username = usernames.get(message.author_id)
+            attachments = attachments_by_msg.get(message.message_id, [])
+
             # Sliding window
             new_sw_state, sw_chunks = self.sliding_window.process_message(
-                sw_state, message, guild_id, channel_id
+                sw_state, message, guild_id, channel_id, username, attachments
             )
             for chunk in sw_chunks:
                 key = (chunk.chunk_type, chunk.channel_id, chunk.start_message_id)
@@ -214,7 +232,7 @@ class ChunkingProcessor:
 
             # Author group
             new_ag_state, ag_chunks = self.author_group.process_message(
-                ag_state, message, guild_id, channel_id
+                ag_state, message, guild_id, channel_id, username, attachments
             )
             for chunk in ag_chunks:
                 key = (chunk.chunk_type, chunk.channel_id, chunk.start_message_id)
@@ -229,7 +247,7 @@ class ChunkingProcessor:
 
             # Reply chain (stateless, always closed)
             rc_chunk = self.reply_chain.process_message(
-                message, message_lookup, guild_id, channel_id
+                message, message_lookup, guild_id, channel_id, usernames, attachments_by_msg
             )
             if rc_chunk and rc_chunk.leaf_message_id:
                 if rc_chunk.leaf_message_id not in reply_chains:
@@ -293,10 +311,19 @@ class ChunkingProcessor:
         # Load sliding window state
         sw_chunk = await get_open_sliding_window(session, channel_id)
         if sw_chunk:
-            sw_messages = await self._fetch_messages_by_ids(
-                session, sw_chunk.message_ids
+            sw_messages = await self._fetch_messages_by_ids(session, sw_chunk.message_ids)
+
+            # Fetch context for SW messages
+            author_ids = list(set(m.author_id for m in sw_messages))
+            message_ids = [m.message_id for m in sw_messages]
+            usernames, attachments_by_msg = await asyncio.gather(
+                self._fetch_users_for_authors(session, author_ids),
+                self._fetch_attachments_for_messages(session, message_ids),
             )
-            sw_state = self.sliding_window.load_state(sw_chunk, sw_messages)
+
+            sw_state = self.sliding_window.load_state(
+                sw_chunk, sw_messages, usernames, attachments_by_msg
+            )
         else:
             sw_state = self.sliding_window.create_empty_state()
 
@@ -305,41 +332,21 @@ class ChunkingProcessor:
         if ag_chunks:
             # Collect all message IDs from all chunks in one query
             all_message_ids: list[int] = []
-            for chunk in ag_chunks.values():
+            all_author_ids: set[int] = set()
+            for author_id, chunk in ag_chunks.items():
                 all_message_ids.extend(chunk.message_ids)
+                all_author_ids.add(author_id)
 
-            # Fetch all messages at once
-            all_messages_dict: dict[int, Message] = {}
-            if all_message_ids:
-                stmt = (
-                    select(
-                        Message.message_id,
-                        Message.channel_id,
-                        Message.author_id,
-                        Message.content,
-                        Message.created_at,
-                        Message.type,
-                        Message.referenced_message_id,
-                        Message.embeds,
-                        Message.mentions,
-                        Message.mention_roles,
-                    )
-                    .where(Message.message_id.in_(all_message_ids))
-                )
-                result = await session.execute(stmt)
-                for row in result.all():
-                    all_messages_dict[row.message_id] = Message(
-                        message_id=row.message_id,
-                        channel_id=row.channel_id,
-                        author_id=row.author_id,
-                        content=row.content or "",
-                        created_at=row.created_at,
-                        type=row.type,
-                        referenced_message_id=row.referenced_message_id,
-                        embeds=row.embeds or [],
-                        mentions=row.mentions or [],
-                        mention_roles=row.mention_roles or [],
-                    )
+            # Fetch all messages, usernames, and attachments in parallel
+            messages_task = asyncio.create_task(
+                self._fetch_messages_for_ag_load(session, all_message_ids)
+            )
+            usernames_task = self._fetch_users_for_authors(session, list(all_author_ids))
+            attachments_task = self._fetch_attachments_for_messages(session, all_message_ids)
+
+            all_messages_dict, usernames, attachments_by_msg = await asyncio.gather(
+                messages_task, usernames_task, attachments_task
+            )
 
             # Build messages_by_author from the fetched messages
             messages_by_author: dict[int, list[Message]] = {}
@@ -362,11 +369,52 @@ class ChunkingProcessor:
 
                 messages_by_author[author_id] = found_messages
 
-            ag_state = self.author_group.load_state(ag_chunks, messages_by_author)
+            ag_state = self.author_group.load_state(
+                ag_chunks, messages_by_author, usernames, attachments_by_msg
+            )
         else:
             ag_state = self.author_group.create_empty_state()
 
         return sw_state, ag_state
+
+    async def _fetch_messages_for_ag_load(
+        self,
+        session: AsyncSession,
+        all_message_ids: list[int],
+    ) -> dict[int, Message]:
+        """Fetch messages for author group state loading."""
+        all_messages_dict: dict[int, Message] = {}
+        if all_message_ids:
+            stmt = (
+                select(
+                    Message.message_id,
+                    Message.channel_id,
+                    Message.author_id,
+                    Message.content,
+                    Message.created_at,
+                    Message.type,
+                    Message.referenced_message_id,
+                    Message.embeds,
+                    Message.mentions,
+                    Message.mention_roles,
+                )
+                .where(Message.message_id.in_(all_message_ids))
+            )
+            result = await session.execute(stmt)
+            for row in result.all():
+                all_messages_dict[row.message_id] = Message(
+                    message_id=row.message_id,
+                    channel_id=row.channel_id,
+                    author_id=row.author_id,
+                    content=row.content or "",
+                    created_at=row.created_at,
+                    type=row.type,
+                    referenced_message_id=row.referenced_message_id,
+                    embeds=row.embeds or [],
+                    mentions=row.mentions or [],
+                    mention_roles=row.mention_roles or [],
+                )
+        return all_messages_dict
 
     async def _fetch_messages(
         self,
