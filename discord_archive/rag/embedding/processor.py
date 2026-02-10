@@ -60,7 +60,7 @@ class EmbeddingConfig:
     """Configuration for embedding."""
 
     model: EmbeddingModelConfig
-    db_batch_size: int = 1000
+    db_batch_size: int = 5000  # Increased from 1000 to reduce GPU idle time
     token_budget: int = 8_000
     max_batch_size: int = 32
     lancedb_data_dir: str = "data/lancedb"
