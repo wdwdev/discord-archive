@@ -5,13 +5,40 @@ Coordinates the chunking of messages into semantic chunks for RAG.
 
 from __future__ import annotations
 
-from sqlalchemy import distinct, select, text
+from rich.progress import (
+    BarColumn,
+    Progress,
+    ProgressColumn,
+    SpinnerColumn,
+    Task,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+from rich.text import Text
+from sqlalchemy import distinct, func, select, text
 
 from discord_archive.core import BaseOrchestrator
 from discord_archive.db.models.channel import Channel
 from discord_archive.db.models.message import Message
 from discord_archive.rag.chunking.logger import logger
 from discord_archive.rag.chunking.processor import ChunkingConfig, ChunkingProcessor
+
+
+class SpeedColumn(ProgressColumn):
+    """Custom column to display processing speed, handling None values."""
+
+    def render(self, task: Task) -> Text:
+        """Render the speed with proper None handling."""
+        # Always use current speed (it persists after completion)
+        speed = task.speed
+
+        # If no speed calculated yet, show placeholder
+        if speed is None:
+            return Text("     -- msg/s", style="dim cyan")
+
+        # Show speed with proper formatting
+        return Text(f"{speed:>6.0f} msg/s", style="cyan")
 
 # Partial unique indexes required by ON CONFLICT clauses.
 # create_all skips indexes when the table already exists,
@@ -180,19 +207,59 @@ class ChunkingOrchestrator(BaseOrchestrator):
             get_chunking_checkpoint,
         )
 
-        # Get checkpoint for logging
+        # Get checkpoint for resuming
         checkpoint = await get_chunking_checkpoint(session, channel_id)
-        last_message_id = checkpoint.last_message_id if checkpoint else None
+        last_message_id = checkpoint.last_message_id if checkpoint else 0
 
+        # Count remaining messages to process
+        remaining_messages = await self._count_channel_messages(
+            session, channel_id, after_message_id=last_message_id
+        )
+
+        # Always show channel start info
         logger.channel_start(channel_name, channel_id, last_message_id)
 
-        # Process the channel with progress callback
-        def on_progress(messages: int, created: int, closed: int) -> None:
-            logger.channel_progress(messages, created, closed)
+        if remaining_messages == 0:
+            logger.channel_empty(channel_name)
+            return
 
-        stats = await self.processor.process_channel(
-            session, guild_id, channel_id, progress_callback=on_progress
-        )
+        # Check if verbose mode (logger level is DEBUG)
+        is_verbose = logger._logger.getEffectiveLevel() <= 10  # DEBUG = 10
+
+        # Only show progress bar in non-verbose mode to avoid conflicts with debug logs
+        if not is_verbose:
+            progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TextColumn("•"),
+                TextColumn("{task.completed}/{task.total} msgs"),
+                TextColumn("•"),
+                SpeedColumn(),
+                TimeElapsedColumn(),
+                TimeRemainingColumn(),
+                console=logger.console,
+            )
+
+            with progress:
+                task_id = progress.add_task(
+                    f"  {channel_name}",
+                    total=remaining_messages,
+                )
+
+                # Progress callback to update the bar
+                def on_progress(messages: int, _created: int, _closed: int) -> None:
+                    progress.update(task_id, completed=messages)
+
+                stats = await self.processor.process_channel(
+                    session, guild_id, channel_id, progress_callback=on_progress
+                )
+        else:
+            # Verbose mode: no progress updates, just run and log at DEBUG level
+            stats = await self.processor.process_channel(
+                session, guild_id, channel_id, progress_callback=None
+            )
 
         if stats.messages_processed == 0:
             logger.channel_empty(channel_name)
@@ -218,6 +285,31 @@ class ChunkingOrchestrator(BaseOrchestrator):
             (ag_created, ag_closed),
             rc_created,
         )
+
+    async def _count_channel_messages(
+        self,
+        session,
+        channel_id: int,
+        after_message_id: int = 0,
+    ) -> int:
+        """Count messages in a channel, optionally after a message ID.
+
+        Args:
+            session: Database session
+            channel_id: Channel ID
+            after_message_id: Only count messages after this ID (for resume)
+
+        Returns:
+            Number of messages
+        """
+        stmt = select(func.count(Message.message_id)).where(
+            Message.channel_id == channel_id
+        )
+        if after_message_id > 0:
+            stmt = stmt.where(Message.message_id > after_message_id)
+
+        result = await session.scalar(stmt)
+        return result or 0
 
     def _log_summary(self, elapsed: float) -> None:
         """Log the final summary."""

@@ -32,21 +32,6 @@ class ChunkingLogger(BaseLogger):
         else:
             self.console.print("    [dim]starting fresh[/dim]")
 
-    def channel_progress(
-        self,
-        messages_processed: int,
-        chunks_created: int,
-        chunks_closed: int,
-    ) -> None:
-        """Log progress during channel processing."""
-        print("\033[2K", end="")
-        self.console.print(
-            f"    [dim]Processed {messages_processed:,} messages, "
-            f"{chunks_created:,} chunks created, {chunks_closed:,} closed[/dim]",
-            end="\r",
-        )
-        self._has_progress_line = True
-
     def channel_complete(
         self,
         channel_name: str,
