@@ -39,8 +39,11 @@ Examples:
   python -m discord_archive.rag.embedding --config /path/to/config.json
       Use a custom config file
 
-  python -m discord_archive.rag.embedding --debug
-      Enable debug logging
+  python -m discord_archive.rag.embedding -v
+      Enable verbose output (DEBUG level)
+
+  python -m discord_archive.rag.embedding -v --show-sql
+      Enable verbose output with SQL queries
         """,
     )
 
@@ -64,12 +67,12 @@ Examples:
         "-v",
         "--verbose",
         action="store_true",
-        help="Enable verbose output (DEBUG level)",
+        help="Enable verbose output (DEBUG level, no SQL queries)",
     )
     parser.add_argument(
-        "--debug",
+        "--show-sql",
         action="store_true",
-        help="Enable debug mode with third-party library logs",
+        help="Show SQL queries (use with --verbose for full debug output)",
     )
     parser.add_argument(
         "--log-file",
@@ -80,21 +83,10 @@ Examples:
     args = parser.parse_args()
 
     # Configure logging based on CLI flags
-    if args.debug:
-        log_level = logging.DEBUG
-        debug_third_party = True
-    elif args.verbose:
-        log_level = logging.DEBUG
-        debug_third_party = False
-    else:
-        log_level = logging.INFO
-        debug_third_party = False
-
-    setup_logging(
-        level=log_level,
-        log_file=args.log_file,
-        debug_third_party=debug_third_party,
-    )
+    # Configure logging
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    show_sql = args.show_sql
+    setup_logging(level=log_level, log_file=args.log_file, show_sql=show_sql)
 
     logger.info("Starting Discord Archive Embedding")
 

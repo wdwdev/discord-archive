@@ -35,7 +35,7 @@ console = Console()
 def setup_logging(
     level: int = logging.INFO,
     log_file: str | Path | None = None,
-    debug_third_party: bool = False,
+    show_sql: bool = False,
 ) -> None:
     """Configure logging with RichHandler using the shared console.
 
@@ -45,7 +45,7 @@ def setup_logging(
     Args:
         level: Logging level for the root logger (default: INFO)
         log_file: Optional path to a log file for persistent logging
-        debug_third_party: If True, set httpx/sqlalchemy to DEBUG level
+        show_sql: If True, show SQL queries at INFO level (default: False)
     """
     handlers: list[logging.Handler] = [
         RichHandler(
@@ -76,10 +76,11 @@ def setup_logging(
     )
 
     # Adjust third-party library log levels
-    if debug_third_party:
-        logging.getLogger("httpx").setLevel(logging.DEBUG)
+    if show_sql:
+        # Show SQL queries at INFO level
         logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
     else:
-        # Quiet third-party libs by default
+        # Silence all third-party noise
         logging.getLogger("httpx").setLevel(logging.WARNING)
         logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+        logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
