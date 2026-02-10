@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -121,26 +122,59 @@ class ChunkingProcessor:
             channel_id: Channel ID
             progress_callback: Optional callback(messages_processed, chunks_created, chunks_closed)
         """
+        channel_start = time.perf_counter()
         stats = ChunkingStats()
 
         # Get checkpoint
+        checkpoint_start = time.perf_counter()
         checkpoint = await get_chunking_checkpoint(session, channel_id)
         last_message_id = checkpoint.last_message_id if checkpoint else 0
+        logger.debug("Checkpoint load: %.3fs", time.perf_counter() - checkpoint_start)
 
         # Load existing open chunks
+        state_start = time.perf_counter()
         sw_state, ag_state = await self._load_states(session, channel_id)
+        logger.debug("State loading: %.3fs", time.perf_counter() - state_start)
+
+        batch_num = 0
+        total_fetch_time = 0.0
+        total_lookup_time = 0.0
+        total_persist_time = 0.0
+        total_commit_time = 0.0
 
         # Process messages in batches
         while True:
+            batch_num += 1
+
+            # Fetch messages
+            fetch_start = time.perf_counter()
             messages = await self._fetch_messages(
                 session, channel_id, last_message_id, self.config.batch_size
             )
+            fetch_time = time.perf_counter() - fetch_start
+            total_fetch_time += fetch_time
 
             if not messages:
                 break
 
+            logger.debug(
+                "Batch %d: fetched %d messages in %.3fs",
+                batch_num,
+                len(messages),
+                fetch_time,
+            )
+
             # Build message lookup for reply chain traversal
+            lookup_start = time.perf_counter()
             message_lookup = await self._build_message_lookup(session, messages)
+            lookup_time = time.perf_counter() - lookup_start
+            total_lookup_time += lookup_time
+            logger.debug(
+                "Batch %d: built message lookup (%d messages) in %.3fs",
+                batch_num,
+                len(message_lookup),
+                lookup_time,
+            )
 
             # Process batch and collect chunks to persist
             batch_stats, chunks_to_persist = await self._process_batch(
@@ -148,7 +182,16 @@ class ChunkingProcessor:
             )
 
             # Batch persist all chunks and build texts
+            persist_start = time.perf_counter()
             await self._persist_chunks_batch(session, chunks_to_persist, message_lookup)
+            persist_time = time.perf_counter() - persist_start
+            total_persist_time += persist_time
+            logger.debug(
+                "Batch %d: persisted %d chunks in %.3fs",
+                batch_num,
+                len(chunks_to_persist),
+                persist_time,
+            )
 
             # Update stats
             stats.messages_processed += batch_stats.messages_processed
@@ -163,7 +206,11 @@ class ChunkingProcessor:
             await upsert_chunking_checkpoint(session, channel_id, last_message_id)
 
             # Commit batch
+            commit_start = time.perf_counter()
             await session.commit()
+            commit_time = time.perf_counter() - commit_start
+            total_commit_time += commit_time
+            logger.debug("Batch %d: committed in %.3fs", batch_num, commit_time)
 
             # Report progress
             if progress_callback:
@@ -174,6 +221,21 @@ class ChunkingProcessor:
                 )
                 chunks_closed = stats.sliding_window_closed + stats.author_group_closed
                 progress_callback(stats.messages_processed, chunks_created, chunks_closed)
+
+        channel_time = time.perf_counter() - channel_start
+        if stats.messages_processed > 0:
+            logger.info(
+                "Channel %d complete: %d messages in %.1fs (%.0f msg/s) | "
+                "Timing: fetch=%.1fs, lookup=%.1fs, persist=%.1fs, commit=%.1fs",
+                channel_id,
+                stats.messages_processed,
+                channel_time,
+                stats.messages_processed / channel_time if channel_time > 0 else 0,
+                total_fetch_time,
+                total_lookup_time,
+                total_persist_time,
+                total_commit_time,
+            )
 
         return stats
 
@@ -192,9 +254,11 @@ class ChunkingProcessor:
         Returns stats and list of unique chunks to persist.
         Only includes each chunk once (the final state).
         """
+        batch_start = time.perf_counter()
         stats = ChunkingStats()
 
         # Preload context for token estimation
+        context_start = time.perf_counter()
         author_ids = list(set(m.author_id for m in messages))
         message_ids = [m.message_id for m in messages]
 
@@ -203,12 +267,25 @@ class ChunkingProcessor:
             self._fetch_users_for_authors(session, author_ids),
             self._fetch_attachments_for_messages(session, message_ids),
         )
+        context_time = time.perf_counter() - context_start
+        logger.debug(
+            "Batch context loading: %.3fs (fetch %d users, %d attachments)",
+            context_time,
+            len(usernames),
+            sum(len(v) for v in attachments_by_msg.values()),
+        )
 
         # Track unique chunks by their identity key
         # For sliding_window/author_group: (chunk_type, channel_id, start_message_id)
         # For reply_chain: (chunk_type, leaf_message_id)
         sw_ag_chunks: dict[tuple, Chunk] = {}
         reply_chains: dict[int, Chunk] = {}
+
+        # Process messages
+        chunking_start = time.perf_counter()
+        sw_time = 0.0
+        ag_time = 0.0
+        rc_time = 0.0
 
         for message in messages:
             stats.messages_processed += 1
@@ -218,9 +295,12 @@ class ChunkingProcessor:
             attachments = attachments_by_msg.get(message.message_id, [])
 
             # Sliding window
+            sw_msg_start = time.perf_counter()
             new_sw_state, sw_chunks = self.sliding_window.process_message(
                 sw_state, message, guild_id, channel_id, username, attachments
             )
+            sw_time += time.perf_counter() - sw_msg_start
+
             for chunk in sw_chunks:
                 key = (chunk.chunk_type, chunk.channel_id, chunk.start_message_id)
                 was_new = chunk.chunk_id is None and key not in sw_ag_chunks
@@ -235,9 +315,12 @@ class ChunkingProcessor:
             sw_state.total_tokens = new_sw_state.total_tokens
 
             # Author group
+            ag_msg_start = time.perf_counter()
             new_ag_state, ag_chunks = self.author_group.process_message(
                 ag_state, message, guild_id, channel_id, username, attachments
             )
+            ag_time += time.perf_counter() - ag_msg_start
+
             for chunk in ag_chunks:
                 key = (chunk.chunk_type, chunk.channel_id, chunk.start_message_id)
                 was_new = chunk.chunk_id is None and key not in sw_ag_chunks
@@ -250,16 +333,37 @@ class ChunkingProcessor:
             ag_state.open_chunks = new_ag_state.open_chunks
 
             # Reply chain (stateless, always closed)
+            rc_msg_start = time.perf_counter()
             rc_chunk = self.reply_chain.process_message(
                 message, message_lookup, guild_id, channel_id, usernames, attachments_by_msg
             )
+            rc_time += time.perf_counter() - rc_msg_start
+
             if rc_chunk and rc_chunk.leaf_message_id:
                 if rc_chunk.leaf_message_id not in reply_chains:
                     stats.reply_chain_created += 1
                 reply_chains[rc_chunk.leaf_message_id] = rc_chunk
 
+        chunking_time = time.perf_counter() - chunking_start
+        logger.debug(
+            "Batch chunking: %.3fs (SW: %.3fs, AG: %.3fs, RC: %.3fs)",
+            chunking_time,
+            sw_time,
+            ag_time,
+            rc_time,
+        )
+
         # Combine all unique chunks
         chunks_to_persist = list(sw_ag_chunks.values()) + list(reply_chains.values())
+
+        batch_time = time.perf_counter() - batch_start
+        logger.debug(
+            "Batch processing total: %.3fs for %d messages (%.0f msg/s)",
+            batch_time,
+            len(messages),
+            len(messages) / batch_time if batch_time > 0 else 0,
+        )
+
         return stats, chunks_to_persist
 
     async def _persist_chunks_batch(
@@ -276,7 +380,10 @@ class ChunkingProcessor:
         if not chunks:
             return
 
+        persist_start = time.perf_counter()
+
         # Set has_attachments before persisting
+        attachments_start = time.perf_counter()
         msg_ids_with_attachments = await self._get_message_ids_with_attachments(
             session, chunks
         )
@@ -285,26 +392,45 @@ class ChunkingProcessor:
                 chunk.has_attachments = any(
                     mid in msg_ids_with_attachments for mid in chunk.message_ids
                 )
+        attachments_time = time.perf_counter() - attachments_start
 
         # Separate by type for optimal bulk handling
         reply_chains = [c for c in chunks if c.chunk_type == "reply_chain"]
         other_chunks = [c for c in chunks if c.chunk_type != "reply_chain"]
 
         # Bulk insert reply chains (immutable, ON CONFLICT DO NOTHING)
+        rc_insert_time = 0.0
         if reply_chains:
+            rc_start = time.perf_counter()
             await bulk_insert_reply_chains(session, reply_chains)
+            rc_insert_time = time.perf_counter() - rc_start
 
         # Bulk upsert sliding_window and author_group chunks
+        upsert_time = 0.0
         if other_chunks:
+            upsert_start = time.perf_counter()
             id_map = await bulk_upsert_chunks(session, other_chunks)
             # Update chunk IDs for state tracking
             for chunk in other_chunks:
                 key = (chunk.chunk_type, chunk.channel_id, chunk.start_message_id)
                 if key in id_map and chunk.chunk_id is None:
                     chunk.chunk_id = id_map[key]
+            upsert_time = time.perf_counter() - upsert_start
 
         # Build and persist texts for chunks with IDs
+        text_start = time.perf_counter()
         await self._build_and_persist_texts(session, chunks, message_lookup)
+        text_time = time.perf_counter() - text_start
+
+        persist_time = time.perf_counter() - persist_start
+        logger.debug(
+            "Persistence breakdown: attachments=%.3fs, rc_insert=%.3fs, upsert=%.3fs, texts=%.3fs (total=%.3fs)",
+            attachments_time,
+            rc_insert_time,
+            upsert_time,
+            text_time,
+            persist_time,
+        )
 
     async def _load_states(
         self,
@@ -716,7 +842,10 @@ class ChunkingProcessor:
         if not chunks_with_ids:
             return
 
+        text_start = time.perf_counter()
+
         # Collect all message_ids and author_ids from chunks
+        collect_start = time.perf_counter()
         all_message_ids: set[int] = set()
         all_author_ids: set[int] = set()
         for chunk in chunks_with_ids:
@@ -732,16 +861,20 @@ class ChunkingProcessor:
             missing_messages = await self._fetch_messages_by_ids(session, missing_ids)
             for msg in missing_messages:
                 message_lookup[msg.message_id] = msg
+        collect_time = time.perf_counter() - collect_start
 
         # Batch fetch attachments and usernames
+        fetch_start = time.perf_counter()
         attachments_by_msg = await self._fetch_attachments_for_messages(
             session, list(all_message_ids)
         )
         usernames_by_author = await self._fetch_users_for_authors(
             session, list(all_author_ids)
         )
+        fetch_time = time.perf_counter() - fetch_start
 
         # Build texts for each chunk
+        build_start = time.perf_counter()
         chunk_texts: list[tuple[int, str, int]] = []
         for chunk in chunks_with_ids:
             # Build MessageContext for each message in the chunk
@@ -769,7 +902,20 @@ class ChunkingProcessor:
             # Build text
             text, token_count = self.text_builder.build_chunk_text(chunk, contexts)
             chunk_texts.append((chunk.chunk_id, text, token_count))
+        build_time = time.perf_counter() - build_start
 
         # Bulk insert chunk texts
+        insert_start = time.perf_counter()
         if chunk_texts:
             await bulk_insert_chunk_texts(session, chunk_texts)
+        insert_time = time.perf_counter() - insert_start
+
+        text_total = time.perf_counter() - text_start
+        logger.debug(
+            "Text building breakdown: collect=%.3fs, fetch=%.3fs, build=%.3fs, insert=%.3fs (total=%.3fs)",
+            collect_time,
+            fetch_time,
+            build_time,
+            insert_time,
+            text_total,
+        )

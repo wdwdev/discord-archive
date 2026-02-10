@@ -5,7 +5,6 @@ from datetime import datetime
 
 from sqlalchemy import select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from discord_archive.db.models.chunk import Chunk
@@ -330,10 +329,10 @@ async def bulk_upsert_chunks(
     session: AsyncSession,
     chunks: list[Chunk],
 ) -> dict[tuple, int]:
-    """Bulk upsert sliding_window/author_group chunks.
+    """Bulk upsert sliding_window/author_group chunks using PostgreSQL UPSERT.
 
     Returns a dict mapping (chunk_type, channel_id, start_message_id) to chunk_id.
-    Uses batch lookup + batch insert for new chunks.
+    Uses INSERT ... ON CONFLICT DO UPDATE for true bulk upsert (single query per batch).
     """
     if not chunks:
         return {}
@@ -341,214 +340,98 @@ async def bulk_upsert_chunks(
     now = utcnow()
     result_map: dict[tuple, int] = {}
 
-    # Separate chunks with IDs (just need update) from new ones
-    chunks_with_id = [c for c in chunks if c.chunk_id is not None]
-    chunks_without_id = [c for c in chunks if c.chunk_id is None]
-
-    # Update chunks with known IDs (still individual but fewer of them)
-    for chunk in chunks_with_id:
-        result_map[(chunk.chunk_type, chunk.channel_id, chunk.start_message_id)] = chunk.chunk_id
-        stmt = (
-            update(Chunk)
-            .where(Chunk.chunk_id == chunk.chunk_id)
-            .values(
-                message_ids=chunk.message_ids,
-                author_ids=chunk.author_ids,
-                mentioned_user_ids=chunk.mentioned_user_ids,
-                mentioned_role_ids=chunk.mentioned_role_ids,
-                has_attachments=chunk.has_attachments,
-                chunk_state=chunk.chunk_state,
-                embedding_status=chunk.embedding_status,
-                last_message_at=chunk.last_message_at,
-                updated_at=now,
-            )
-        )
-        await session.execute(stmt)
-
-    if not chunks_without_id:
-        return result_map
-
-    # For chunks without IDs, batch lookup and then batch insert/update
-    sw_chunks = [c for c in chunks_without_id if c.chunk_type == "sliding_window"]
-    ag_chunks = [c for c in chunks_without_id if c.chunk_type == "author_group"]
+    # Separate by chunk type
+    sw_chunks = [c for c in chunks if c.chunk_type == "sliding_window"]
+    ag_chunks = [c for c in chunks if c.chunk_type == "author_group"]
 
     if sw_chunks:
         result_map.update(
-            await _bulk_upsert_by_type(session, sw_chunks, "sliding_window", now)
+            await _bulk_upsert_by_type_optimized(session, sw_chunks, "sliding_window", now)
         )
 
     if ag_chunks:
         result_map.update(
-            await _bulk_upsert_by_type(session, ag_chunks, "author_group", now)
+            await _bulk_upsert_by_type_optimized(session, ag_chunks, "author_group", now)
         )
 
     return result_map
 
 
-async def _bulk_upsert_by_type(
+async def _bulk_upsert_by_type_optimized(
     session: AsyncSession,
     chunks: list[Chunk],
     chunk_type: str,
     now: datetime,
 ) -> dict[tuple, int]:
-    """Bulk upsert chunks of a specific type.
+    """Bulk upsert chunks using PostgreSQL's INSERT ... ON CONFLICT DO UPDATE.
 
-    Uses batch lookup + batch insert for new chunks.
-    Updates are done individually (ARRAY types don't work well with batch UPDATE).
+    This is much faster than the old approach (lookup + separate updates).
+    Uses a single batched UPSERT query instead of N individual UPDATEs.
     """
+    if not chunks:
+        return {}
+
     result_map: dict[tuple, int] = {}
     channel_id = chunks[0].channel_id
 
-    assert all(
-        c.channel_id == channel_id for c in chunks
-    ), "_bulk_upsert_by_type requires all chunks to be from the same channel"
+    # Batch size to avoid PostgreSQL parameter limit (32767)
+    # Each chunk has ~14 fields, so 500 * 14 = 7000 params (safe)
+    BATCH_SIZE = 500
 
-    # Batch lookup existing chunks (1 query)
-    start_ids = [c.start_message_id for c in chunks]
-    stmt = (
-        select(Chunk.chunk_id, Chunk.start_message_id)
-        .where(Chunk.chunk_type == chunk_type)
-        .where(Chunk.channel_id == channel_id)
-        .where(Chunk.start_message_id.in_(start_ids))
-    )
-    result = await session.execute(stmt)
-    existing = {row.start_message_id: row.chunk_id for row in result.all()}
+    for i in range(0, len(chunks), BATCH_SIZE):
+        batch = chunks[i : i + BATCH_SIZE]
+        values_list = [
+            {
+                "chunk_type": c.chunk_type,
+                "guild_id": c.guild_id,
+                "channel_id": c.channel_id,
+                "message_ids": c.message_ids,
+                "author_ids": c.author_ids,
+                "mentioned_user_ids": c.mentioned_user_ids,
+                "mentioned_role_ids": c.mentioned_role_ids,
+                "has_attachments": c.has_attachments,
+                "chunk_state": c.chunk_state,
+                "start_message_id": c.start_message_id,
+                "leaf_message_id": c.leaf_message_id,
+                "cross_channel_ref": c.cross_channel_ref,
+                "embedding_status": c.embedding_status,
+                "first_message_at": c.first_message_at,
+                "last_message_at": c.last_message_at,
+                "created_at": now,
+                "updated_at": now,
+            }
+            for c in batch
+        ]
 
-    # Separate into updates and inserts
-    to_update = []
-    to_insert = []
-
-    for chunk in chunks:
-        if chunk.start_message_id in existing:
-            chunk.chunk_id = existing[chunk.start_message_id]
-            to_update.append(chunk)
-        else:
-            to_insert.append(chunk)
-
-    # Updates - individual queries (typically few per batch)
-    for chunk in to_update:
+        # Use PostgreSQL's ON CONFLICT DO UPDATE for true bulk upsert
+        # This handles both inserts and updates in a single query
+        # Note: The unique index is a partial index with a WHERE clause,
+        # so we need to specify index_where to match the index condition
         stmt = (
-            update(Chunk)
-            .where(Chunk.chunk_id == chunk.chunk_id)
-            .values(
-                message_ids=chunk.message_ids,
-                author_ids=chunk.author_ids,
-                mentioned_user_ids=chunk.mentioned_user_ids,
-                mentioned_role_ids=chunk.mentioned_role_ids,
-                has_attachments=chunk.has_attachments,
-                chunk_state=chunk.chunk_state,
-                embedding_status=chunk.embedding_status,
-                last_message_at=chunk.last_message_at,
-                updated_at=now,
-            )
-        )
-        await session.execute(stmt)
-        result_map[(chunk_type, chunk.channel_id, chunk.start_message_id)] = chunk.chunk_id
-
-    # Batch INSERT - batched to avoid PostgreSQL parameter limit
-    if to_insert:
-        BATCH_SIZE = 500  # 500 chunks * 12 params = 6000, well under 32767 limit
-
-        for i in range(0, len(to_insert), BATCH_SIZE):
-            batch = to_insert[i : i + BATCH_SIZE]
-            values_list = [
-                {
-                    "chunk_type": c.chunk_type,
-                    "guild_id": c.guild_id,
-                    "channel_id": c.channel_id,
-                    "message_ids": c.message_ids,
-                    "author_ids": c.author_ids,
-                    "mentioned_user_ids": c.mentioned_user_ids,
-                    "mentioned_role_ids": c.mentioned_role_ids,
-                    "has_attachments": c.has_attachments,
-                    "chunk_state": c.chunk_state,
-                    "start_message_id": c.start_message_id,
-                    "leaf_message_id": c.leaf_message_id,
-                    "cross_channel_ref": c.cross_channel_ref,
-                    "embedding_status": c.embedding_status,
-                    "first_message_at": c.first_message_at,
-                    "last_message_at": c.last_message_at,
-                    "created_at": now,
+            pg_insert(Chunk)
+            .values(values_list)
+            .on_conflict_do_update(
+                # Conflict on the unique constraint (partial index)
+                index_elements=["chunk_type", "channel_id", "start_message_id"],
+                index_where=text(f"chunk_type = '{chunk_type}'"),
+                # Update all mutable fields on conflict
+                set_={
+                    "message_ids": pg_insert(Chunk).excluded.message_ids,
+                    "author_ids": pg_insert(Chunk).excluded.author_ids,
+                    "mentioned_user_ids": pg_insert(Chunk).excluded.mentioned_user_ids,
+                    "mentioned_role_ids": pg_insert(Chunk).excluded.mentioned_role_ids,
+                    "has_attachments": pg_insert(Chunk).excluded.has_attachments,
+                    "chunk_state": pg_insert(Chunk).excluded.chunk_state,
+                    "embedding_status": pg_insert(Chunk).excluded.embedding_status,
+                    "last_message_at": pg_insert(Chunk).excluded.last_message_at,
                     "updated_at": now,
-                }
-                for c in batch
-            ]
+                },
+            )
+            .returning(Chunk.chunk_id, Chunk.start_message_id)
+        )
 
-            try:
-                stmt = (
-                    pg_insert(Chunk)
-                    .values(values_list)
-                    .returning(Chunk.chunk_id, Chunk.start_message_id)
-                )
-                result = await session.execute(stmt)
-
-                for row in result.all():
-                    result_map[(chunk_type, channel_id, row.start_message_id)] = row.chunk_id
-            except IntegrityError:
-                # Race condition: another process inserted some chunks between
-                # our SELECT and INSERT. Roll back and handle individually.
-                await session.rollback()
-                logger.debug(
-                    "Race condition in bulk insert for %s, falling back to individual upserts",
-                    chunk_type,
-                )
-
-                for chunk in batch:
-                    # Re-check if chunk exists now
-                    existing_stmt = (
-                        select(Chunk.chunk_id)
-                        .where(Chunk.chunk_type == chunk_type)
-                        .where(Chunk.channel_id == channel_id)
-                        .where(Chunk.start_message_id == chunk.start_message_id)
-                    )
-                    existing_id = await session.scalar(existing_stmt)
-
-                    if existing_id:
-                        # Update existing
-                        upd_stmt = (
-                            update(Chunk)
-                            .where(Chunk.chunk_id == existing_id)
-                            .values(
-                                message_ids=chunk.message_ids,
-                                author_ids=chunk.author_ids,
-                                mentioned_user_ids=chunk.mentioned_user_ids,
-                                mentioned_role_ids=chunk.mentioned_role_ids,
-                                has_attachments=chunk.has_attachments,
-                                chunk_state=chunk.chunk_state,
-                                embedding_status=chunk.embedding_status,
-                                last_message_at=chunk.last_message_at,
-                                updated_at=now,
-                            )
-                        )
-                        await session.execute(upd_stmt)
-                        result_map[(chunk_type, channel_id, chunk.start_message_id)] = existing_id
-                    else:
-                        # Insert new (should succeed now)
-                        ins_stmt = (
-                            pg_insert(Chunk)
-                            .values(
-                                chunk_type=chunk.chunk_type,
-                                guild_id=chunk.guild_id,
-                                channel_id=chunk.channel_id,
-                                message_ids=chunk.message_ids,
-                                author_ids=chunk.author_ids,
-                                mentioned_user_ids=chunk.mentioned_user_ids,
-                                mentioned_role_ids=chunk.mentioned_role_ids,
-                                has_attachments=chunk.has_attachments,
-                                chunk_state=chunk.chunk_state,
-                                start_message_id=chunk.start_message_id,
-                                leaf_message_id=chunk.leaf_message_id,
-                                cross_channel_ref=chunk.cross_channel_ref,
-                                embedding_status=chunk.embedding_status,
-                                first_message_at=chunk.first_message_at,
-                                last_message_at=chunk.last_message_at,
-                                created_at=now,
-                                updated_at=now,
-                            )
-                            .returning(Chunk.chunk_id)
-                        )
-                        result = await session.execute(ins_stmt)
-                        chunk_id = result.scalar_one()
-                        result_map[(chunk_type, channel_id, chunk.start_message_id)] = chunk_id
+        result = await session.execute(stmt)
+        for row in result.all():
+            result_map[(chunk_type, channel_id, row.start_message_id)] = row.chunk_id
 
     return result_map
