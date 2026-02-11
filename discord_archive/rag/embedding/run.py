@@ -34,8 +34,18 @@ from discord_archive.rag.embedding.processor import (
 )
 
 
-class ChunkSpeedColumn(ProgressColumn):
-    """Custom column to display chunk processing speed, handling None values."""
+class TokenCountColumn(ProgressColumn):
+    """Custom column to display token count with thousand separators."""
+
+    def render(self, task: Task) -> Text:
+        """Render completed/total tokens with commas."""
+        completed = f"{int(task.completed):,}" if task.completed else "0"
+        total = f"{int(task.total):,}" if task.total else "0"
+        return Text(f"{completed}/{total} tokens", style="progress.download")
+
+
+class TokenSpeedColumn(ProgressColumn):
+    """Custom column to display token processing speed, handling None values."""
 
     def render(self, task: Task) -> Text:
         """Render the speed with proper None handling."""
@@ -44,10 +54,12 @@ class ChunkSpeedColumn(ProgressColumn):
 
         # If no speed calculated yet, show placeholder
         if speed is None:
-            return Text("     -- chunks/s", style="dim cyan")
+            return Text("       -- tokens/s", style="dim cyan")
 
-        # Show speed with proper formatting
-        return Text(f"{speed:>6.0f} chunks/s", style="cyan")
+        # Show speed with proper formatting (K = thousands)
+        if speed >= 1000:
+            return Text(f"{speed/1000:>6.1f}K tokens/s", style="cyan")
+        return Text(f"{speed:>6.0f} tokens/s", style="cyan")
 
 
 class EmbeddingOrchestrator(BaseOrchestrator):
@@ -109,9 +121,9 @@ class EmbeddingOrchestrator(BaseOrchestrator):
             BarColumn(),
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             TextColumn("•"),
-            TextColumn("{task.completed}/{task.total} chunks"),
+            TokenCountColumn(),
             TextColumn("•"),
-            ChunkSpeedColumn(),
+            TokenSpeedColumn(),
             TimeElapsedColumn(),
             TimeRemainingColumn(),
             console=logger.console,
@@ -120,10 +132,10 @@ class EmbeddingOrchestrator(BaseOrchestrator):
         try:
             async with self.async_session() as session:
                 with progress:
-                    task_id = progress.add_task("Embedding", total=chunk_count)
+                    task_id = progress.add_task("Embedding", total=total_tokens)
 
-                    def on_progress(chunks_processed: int) -> None:
-                        progress.update(task_id, completed=chunks_processed)
+                    def on_progress(chunks_processed: int, tokens_processed: int) -> None:
+                        progress.update(task_id, completed=tokens_processed)
 
                     stats = await self.processor.process(
                         session, model, lancedb_store,

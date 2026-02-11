@@ -98,7 +98,7 @@ class EmbeddingProcessor:
         session: AsyncSession,
         model: EmbeddingModel,
         lancedb_store: LanceDBStore,
-        progress_callback: Callable[[int], None] | None = None,
+        progress_callback: Callable[[int, int], None] | None = None,
         guild_id: int | None = None,
         channel_id: int | None = None,
     ) -> EmbeddingStats:
@@ -108,7 +108,7 @@ class EmbeddingProcessor:
             session: Database session.
             model: Loaded embedding model.
             lancedb_store: Connected LanceDB store.
-            progress_callback: Optional callback(chunks_processed_so_far).
+            progress_callback: Optional callback(chunks_processed, tokens_processed).
             guild_id: If provided, only process this guild.
             channel_id: If provided, only process this channel.
 
@@ -191,7 +191,7 @@ class EmbeddingProcessor:
                     stats.chunks_processed += len(batch)
                     stats.tokens_processed += sum(r.token_count for r in batch)
                     if progress_callback:
-                        progress_callback(stats.chunks_processed)
+                        progress_callback(stats.chunks_processed, stats.tokens_processed)
 
                 # Finalize previous flush (should already be done
                 # since encoding above took ~25s, overlapping the

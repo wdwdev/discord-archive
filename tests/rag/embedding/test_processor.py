@@ -43,7 +43,7 @@ class TestEmbeddingConfig:
 
     def test_default_values(self) -> None:
         config = EmbeddingConfig.default()
-        assert config.db_batch_size == 1000
+        assert config.db_batch_size == 5000  # Increased from 1000
         assert config.token_budget == 8_000
         assert config.max_batch_size == 32
         assert config.lancedb_data_dir == "data/lancedb"
@@ -437,9 +437,9 @@ class TestAdaptiveBatching:
         assert model.encode_documents.call_count == 2
         lancedb_store.add.assert_called_once()
         assert callback.call_count == 2
-        # Callback reports cumulative tokens (100 tok/chunk × 2 chunks/batch)
-        callback.assert_any_call(200)
-        callback.assert_any_call(400)
+        # Callback receives (chunks_processed, tokens_processed)
+        callback.assert_any_call(2, 200)  # After batch 1: 2 chunks, 200 tokens
+        callback.assert_any_call(4, 400)  # After batch 2: 4 chunks, 400 tokens
 
     @pytest.mark.asyncio
     async def test_oom_cascading_reduction(self) -> None:
