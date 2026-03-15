@@ -23,7 +23,7 @@ def main() -> None:
 
     # Shared options for ingest/chunk/embed
     def add_common_args(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--config", default="config.json", help="Path to config.json")
+        p.add_argument("--config", default="config.toml", help="Path to config file")
         p.add_argument("--guild-id", type=int, help="Process only this guild")
         p.add_argument("--channel-id", type=int, help="Process only this channel")
         p.add_argument("-v", "--verbose", action="store_true", help="DEBUG logging")
@@ -40,7 +40,7 @@ def main() -> None:
     add_common_args(p_embed)
 
     p_project = sub.add_parser("project", help="Compute 3D projections (PCA + UMAP)")
-    p_project.add_argument("--config", default="config.json", help="Path to config.json")
+    p_project.add_argument("--config", default="config.toml", help="Path to config file")
 
     p_serve = sub.add_parser("serve", help="Start Galaxy web server")
     p_serve.add_argument("--host", default="0.0.0.0", help="Bind host")

@@ -53,12 +53,12 @@ Four layers, each runnable independently:
 cp .env.example .env     # edit with your PostgreSQL credentials
 docker compose up -d     # start PostgreSQL
 
+cp config.example.toml config.toml  # edit with your database URL and Discord tokens
+
 uv sync                  # core only (ingest)
 uv sync --extra rag      # + RAG pipeline and MCP server
 uv sync --extra galaxy   # + 3D visualization
 ```
-
-Copy `config.example.json` to `config.json` and fill in your database URL and Discord tokens.
 
 ## Ingest
 

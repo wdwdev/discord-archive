@@ -1,13 +1,11 @@
 """Configuration management using pydantic-settings.
 
-Provides validated configuration with support for:
-- JSON config file (config.json)
-- Type coercion and validation
+Provides validated configuration loaded from a TOML config file (config.toml).
 """
 
 from __future__ import annotations
 
-import json
+import tomllib
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -21,7 +19,7 @@ class AccountConfig(BaseModel):
 
     name: str
     token: str
-    user_agent: str
+    user_agent: str = ""
     guilds: list[str]
 
     @field_validator("guilds", mode="before")
@@ -34,10 +32,7 @@ class AccountConfig(BaseModel):
 
 
 class AppSettings(BaseSettings):
-    """Application settings with validation.
-
-    Settings are loaded from a JSON config file (config.json).
-    """
+    """Application settings with validation."""
 
     database_url: str = ""
     readonly_database_url: str | None = None
@@ -48,43 +43,22 @@ class AppSettings(BaseSettings):
     )
 
     @classmethod
-    def from_json(cls, path: str | Path = "config.json") -> "AppSettings":
-        """Load settings from a JSON config file.
-
-        Args:
-            path: Path to the JSON config file
-
-        Returns:
-            AppSettings instance with validated configuration
-        """
+    def from_file(cls, path: str | Path = "config.toml") -> "AppSettings":
+        """Load settings from a TOML config file."""
         config_path = Path(path)
         if config_path.exists():
-            with open(config_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            with open(config_path, "rb") as f:
+                data = tomllib.load(f)
             return cls(**data)
         return cls()
 
 
 @lru_cache
-def get_settings(config_path: str = "config.json") -> AppSettings:
-    """Get cached application settings.
-
-    Args:
-        config_path: Path to JSON config file (default: config.json)
-
-    Returns:
-        Cached AppSettings instance
-    """
-    return AppSettings.from_json(config_path)
+def get_settings(config_path: str = "config.toml") -> AppSettings:
+    """Get cached application settings."""
+    return AppSettings.from_file(config_path)
 
 
-# Backward compatibility aliases
+# Backward compatibility
 AppConfig = AppSettings
-
-
-def load_config(path: str | Path = "config.json") -> AppSettings:
-    """Load configuration from file (backward compatible).
-
-    Deprecated: Use get_settings() or AppSettings.from_json() instead.
-    """
-    return AppSettings.from_json(path)
+load_config = AppSettings.from_file

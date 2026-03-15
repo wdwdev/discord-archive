@@ -42,7 +42,7 @@ class DiscordClient:
     """
 
     token: str
-    user_agent: str
+    user_agent: str = ""
 
     def __post_init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
@@ -50,11 +50,13 @@ class DiscordClient:
     @property
     def headers(self) -> dict[str, str]:
         """Build request headers."""
-        return {
+        headers = {
             "Authorization": self.token,
-            "User-Agent": self.user_agent,
             "Content-Type": "application/json",
         }
+        if self.user_agent:
+            headers["User-Agent"] = self.user_agent
+        return headers
 
     async def __aenter__(self) -> "DiscordClient":
         self._client = httpx.AsyncClient(

@@ -1,0 +1,20 @@
+# PostgreSQL connection (asyncpg driver)
+database_url = "postgresql+asyncpg://user:pass@localhost:5432/discord_archive"
+
+# Read-only connection for MCP retrieval server (optional)
+# readonly_database_url = "postgresql+asyncpg://readonly:pass@localhost:5432/discord_archive"
+
+# Discord accounts to archive from.
+# Bot tokens need "Bot " prefix, user tokens go as-is.
+
+[[accounts]]
+name = "my-bot"
+token = "Bot MTIz..."
+guilds = ["123456789", "987654321"]
+
+# User tokens need a browser User-Agent to avoid detection.
+# [[accounts]]
+# name = "alt"
+# token = "user-token-here"
+# user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:137.0) Gecko/20100101 Firefox/137.0"
+# guilds = ["111222333"]
