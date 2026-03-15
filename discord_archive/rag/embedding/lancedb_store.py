@@ -6,9 +6,12 @@ for storing chunk embeddings in LanceDB.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import lancedb
+import numpy as np
 import pyarrow as pa
 
 CHUNKS_TABLE = "chunks"
@@ -25,6 +28,19 @@ CHUNKS_SCHEMA = pa.schema([
     pa.field("first_message_at", pa.timestamp("us", tz="UTC")),
     pa.field("last_message_at", pa.timestamp("us", tz="UTC")),
 ])
+
+
+@dataclass
+class SearchResult:
+    """A single vector search result."""
+
+    chunk_id: int
+    distance: float
+    guild_id: int
+    channel_id: int
+    author_ids: list[int]
+    first_message_at: datetime | None
+    last_message_at: datetime | None
 
 
 class LanceDBStore:
@@ -92,3 +108,65 @@ class LanceDBStore:
         table.merge_insert(
             "chunk_id"
         ).when_matched_update_all().when_not_matched_insert_all().execute(records)
+
+    def search(
+        self,
+        query_vector: np.ndarray,
+        limit: int = 20,
+        *,
+        guild_id: int | None = None,
+        channel_id: int | None = None,
+        author_id: int | None = None,
+        after: datetime | None = None,
+        before: datetime | None = None,
+    ) -> list[SearchResult]:
+        """Search for similar chunks by vector.
+
+        Args:
+            query_vector: Query embedding, shape (1, 4096) or (4096,).
+            limit: Maximum number of results to return.
+            guild_id: Filter by guild.
+            channel_id: Filter by channel.
+            author_id: Filter by author (array_contains on author_ids).
+            after: Filter chunks with first_message_at >= this time.
+            before: Filter chunks with last_message_at <= this time.
+
+        Returns:
+            List of SearchResult ordered by distance (ascending).
+        """
+        if self._db is None:
+            raise RuntimeError("Store not connected. Call connect() first.")
+
+        vec = query_vector.flatten().tolist()
+        table = self._db.open_table(CHUNKS_TABLE)
+        query = table.search(vec)
+
+        filters = []
+        if guild_id is not None:
+            filters.append(f"guild_id = {guild_id}")
+        if channel_id is not None:
+            filters.append(f"channel_id = {channel_id}")
+        if author_id is not None:
+            filters.append(f"array_contains(author_ids, {author_id})")
+        if after is not None:
+            filters.append(f"first_message_at >= timestamp '{after.isoformat()}'")
+        if before is not None:
+            filters.append(f"last_message_at <= timestamp '{before.isoformat()}'")
+
+        if filters:
+            query = query.where(" AND ".join(filters))
+
+        rows = query.limit(limit).to_list()
+
+        results = []
+        for row in rows:
+            results.append(SearchResult(
+                chunk_id=row["chunk_id"],
+                distance=row["_distance"],
+                guild_id=row["guild_id"],
+                channel_id=row["channel_id"],
+                author_ids=row["author_ids"],
+                first_message_at=row.get("first_message_at"),
+                last_message_at=row.get("last_message_at"),
+            ))
+        return results

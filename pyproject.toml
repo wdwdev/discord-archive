@@ -27,6 +27,7 @@ rag = [
     "lancedb>=0.5",
     "datasets>=2.0",   # NV-Embed-v2 remote code imports datasets.Dataset
     "einops>=0.7",     # NV-Embed-v2 remote code imports einops
+    "mcp>=1.0",
 ]
 test = [
     "pytest>=8.0",

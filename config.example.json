@@ -1,5 +1,6 @@
 {
     "database_url": "postgresql+asyncpg://user:pass@localhost:5432/discord_archive",
+    "readonly_database_url": "postgresql+asyncpg://readonly:pass@localhost:5432/discord_archive",
     "accounts": [
         {
             "name": "A",

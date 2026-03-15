@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "discord-archive": {
+      "command": "uv",
+      "args": ["run", "--extra", "rag", "python", "-m", "discord_archive.rag.retrieval"],
+      "cwd": "/home/wdwd/discord-archive"
+    }
+  }
+}

@@ -24,6 +24,11 @@ class EmbeddingModelConfig:
     batch_token_budget: int = 8_000
 
 
+DEFAULT_QUERY_INSTRUCTION = (
+    "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: "
+)
+
+
 class EmbeddingModel:
     """NV-Embed-v2 embedding model wrapper.
 
@@ -31,6 +36,7 @@ class EmbeddingModel:
     as required by the NV-Embed-v2 model card.
 
     Documents are encoded with an empty instruction prefix.
+    Query encoding uses an asymmetric instruction prefix.
     Embeddings are L2-normalized before returning.
 
     Requires transformers>=4.42,<4.45 for compatibility with
@@ -80,6 +86,41 @@ class EmbeddingModel:
             embeddings = self._model.encode(
                 texts,
                 instruction="",
+                max_length=self.config.max_length,
+            )
+            if isinstance(embeddings, np.ndarray):
+                embeddings = torch.from_numpy(embeddings)
+            embeddings = F.normalize(embeddings, p=2, dim=1)
+
+        return embeddings.cpu().numpy().astype(np.float32)
+
+    def encode_query(
+        self, text: str, instruction: str | None = None
+    ) -> np.ndarray:
+        """Encode a single query text into a normalized embedding.
+
+        Uses an instruction prefix for asymmetric retrieval
+        (query vs document encoding).
+
+        Args:
+            text: Query text to encode.
+            instruction: Instruction prefix. Defaults to DEFAULT_QUERY_INSTRUCTION.
+
+        Returns:
+            np.ndarray of shape (1, 4096), dtype float32, L2-normalized.
+        """
+        if self._model is None:
+            raise RuntimeError("Model not loaded. Call load() first.")
+
+        if instruction is None:
+            instruction = DEFAULT_QUERY_INSTRUCTION
+
+        with torch.no_grad(), warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="To copy construct from a tensor")
+            warnings.filterwarnings("ignore", message=".*sdp_kernel.*is deprecated")
+            embeddings = self._model.encode(
+                [text],
+                instruction=instruction,
                 max_length=self.config.max_length,
             )
             if isinstance(embeddings, np.ndarray):

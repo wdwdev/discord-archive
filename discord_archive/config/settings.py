@@ -40,6 +40,7 @@ class AppSettings(BaseSettings):
     """
 
     database_url: str = ""
+    readonly_database_url: str | None = None
     accounts: list[AccountConfig] = []
 
     model_config = SettingsConfigDict(
