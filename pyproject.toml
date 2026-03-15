@@ -42,6 +42,9 @@ test = [
     "pytest-cov",
 ]
 
+[project.scripts]
+discord-archive = "discord_archive.__main__:main"
+
 [tool.setuptools]
 packages = ["discord_archive"]
 

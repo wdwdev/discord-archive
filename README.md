@@ -36,14 +36,14 @@ graph LR
 
 Four layers, each runnable independently:
 
-| Layer | Entry point | Purpose |
-|-------|------------|---------|
-| **Ingest** | `python -m discord_archive.ingest` | Download Discord data to PostgreSQL |
-| **RAG** | `python -m discord_archive.rag.chunking` | Chunk messages, embed with NV-Embed-v2, store in LanceDB |
-| | `python -m discord_archive.rag.embedding` | |
+| Layer | Command | Purpose |
+|-------|---------|---------|
+| **Ingest** | `discord-archive ingest` | Download Discord data to PostgreSQL |
+| **RAG** | `discord-archive chunk` | Chunk messages into semantic groups |
+| | `discord-archive embed` | Encode chunks with NV-Embed-v2 into LanceDB |
 | **Retrieval** | via Claude Code (`.mcp.json`) | MCP server with semantic search + SQL tools |
-| **Galaxy** | `python -m discord_archive.rag.projection` | Project embeddings to 3D, serve via FastAPI + React |
-| | `python -m discord_archive.galaxy` | |
+| **Galaxy** | `discord-archive project` | Project embeddings to 3D (PCA + UMAP) |
+| | `discord-archive serve` | Start web server (FastAPI + React + Three.js) |
 
 ## Setup
 
@@ -65,10 +65,10 @@ Copy `config.example.json` to `config.json` and fill in your database URL and Di
 Downloads guilds, channels, roles, messages, attachments, reactions, emojis, stickers, and scheduled events. Supports historical backfill and incremental sync with per-channel checkpoints.
 
 ```bash
-python -m discord_archive.ingest                          # all configured guilds
-python -m discord_archive.ingest --guild-id 123           # specific guild
-python -m discord_archive.ingest --channel-id 456         # specific channel
-python -m discord_archive.ingest -v                       # verbose logging
+discord-archive ingest                          # all configured guilds
+discord-archive ingest --guild-id 123           # specific guild
+discord-archive ingest --channel-id 456         # specific channel
+discord-archive ingest -v                       # verbose logging
 ```
 
 Rate limits are handled automatically (429 → wait, 5xx → exponential backoff, 403 → skip channel). Interrupted runs resume from checkpoint.
@@ -84,8 +84,8 @@ Three-stage pipeline that turns messages into searchable vector embeddings:
 3. **Storage** — Vectors stored in LanceDB with metadata (guild, channel, authors, timestamps) for filtered ANN search.
 
 ```bash
-python -m discord_archive.rag.chunking                    # create chunks
-python -m discord_archive.rag.embedding                   # encode to vectors
+discord-archive chunk                           # create chunks
+discord-archive embed                           # encode to vectors
 ```
 
 Both commands accept `--guild-id` and `--channel-id` filters.
@@ -111,8 +111,8 @@ Registered in `.mcp.json` and auto-started by Claude Code. Lazy-loads the embedd
 3. **Frontend** — React + Three.js with custom GLSL shaders for point rendering and GPU picking.
 
 ```bash
-python -m discord_archive.rag.projection                  # compute 3D coordinates
-python -m discord_archive.galaxy                          # start web server (port 8000)
+discord-archive project                         # compute 3D coordinates
+discord-archive serve                           # start web server (port 8000)
 ```
 
 ## Project Structure
