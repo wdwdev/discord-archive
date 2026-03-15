@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+@theme {
+  --color-galaxy-bg: #08080b;
+  --color-galaxy-surface: rgba(255, 255, 255, 0.05);
+  --color-galaxy-border: rgba(255, 255, 255, 0.1);
+  --color-galaxy-accent: #6366f1;
+  --color-galaxy-accent-hover: #818cf8;
+}
+
+body {
+  margin: 0;
+  font-family:
+    "Inter",
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
