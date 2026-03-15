@@ -18,5 +18,5 @@ jobs:
         with:
           python-version: "3.11"
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --extra test
+      - run: uv sync --extra test --extra rag
       - run: uv run pytest

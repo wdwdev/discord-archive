@@ -16,14 +16,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import sqlalchemy
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from discord_archive.config.settings import get_settings
-
 from discord_archive.rag.embedding.lancedb_store import LanceDBStore
 
 if TYPE_CHECKING:
