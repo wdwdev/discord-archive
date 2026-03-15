@@ -25,7 +25,7 @@ class EmbeddingModelConfig:
 
 
 DEFAULT_QUERY_INSTRUCTION = (
-    "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: "
+    "Instruct: Given a search query, retrieve relevant Discord chat messages and conversations\nQuery: "
 )
 
 

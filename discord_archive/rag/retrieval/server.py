@@ -131,16 +131,32 @@ async def _fetch_chunk_texts(
         return {row[0]: row[1] for row in result.fetchall()}
 
 
+def _parse_snowflake(value: str | None) -> int | None:
+    """Parse a snowflake ID from string or int, returning None if empty.
+
+    Strips surrounding quotes to handle LLM tool calls that pass
+    snowflake strings as ``"583750578094735360"`` (with literal quotes).
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip("\"'")
+        if not value:
+            return None
+    return int(value)
+
+
 @mcp.tool()
 async def semantic_search(
     query: str,
     limit: int = 20,
-    guild_id: int | None = None,
-    channel_id: int | None = None,
-    author_id: int | None = None,
+    guild_id: str | None = None,
+    channel_id: str | None = None,
+    author_id: str | None = None,
     after: str | None = None,
     before: str | None = None,
     include_text: bool = False,
+    instruction: str | None = None,
     ctx: Context | None = None,
 ) -> str:
     """Search Discord archive chunks by semantic similarity.
@@ -152,26 +168,30 @@ async def semantic_search(
     Args:
         query: Natural language search query.
         limit: Max results (default 20).
-        guild_id: Filter by guild ID.
-        channel_id: Filter by channel ID.
-        author_id: Filter by author ID (matches if author is in the chunk).
+        guild_id: Filter by guild ID (pass as string to avoid precision loss).
+        channel_id: Filter by channel ID (pass as string to avoid precision loss).
+        author_id: Filter by author ID (pass as string to avoid precision loss).
         after: Filter chunks after this ISO datetime.
         before: Filter chunks before this ISO datetime.
         include_text: Include chunk text in results (default false).
+        instruction: Custom instruction prefix for the embedding model.
+            Defaults to a Discord-optimized instruction. Use this to steer
+            retrieval toward specific content types, e.g.
+            "Instruct: Retrieve messages where someone describes their personal background or experience\\nQuery: "
     """
     state: ServerState = ctx.request_context.lifespan_context
 
     after_dt = datetime.fromisoformat(after) if after else None
     before_dt = datetime.fromisoformat(before) if before else None
 
-    query_vector = state.embedding_model.encode_query(query)
+    query_vector = state.embedding_model.encode_query(query, instruction=instruction)
 
     results = state.lancedb_store.search(
         query_vector,
         limit=limit,
-        guild_id=guild_id,
-        channel_id=channel_id,
-        author_id=author_id,
+        guild_id=_parse_snowflake(guild_id),
+        channel_id=_parse_snowflake(channel_id),
+        author_id=_parse_snowflake(author_id),
         after=after_dt,
         before=before_dt,
     )
@@ -239,8 +259,8 @@ def _to_json_safe(value: object) -> object:
 
 @mcp.tool()
 async def refresh_attachment_url(
-    attachment_id: int | None = None,
-    message_id: int | None = None,
+    attachment_id: str | None = None,
+    message_id: str | None = None,
     ctx: Context | None = None,
 ) -> str:
     """Refresh expired Discord CDN attachment URLs.
@@ -250,10 +270,13 @@ async def refresh_attachment_url(
     the Discord API.
 
     Args:
-        attachment_id: Refresh a specific attachment by ID.
-        message_id: Refresh all attachments for a message.
+        attachment_id: Refresh a specific attachment by ID (pass as string to avoid precision loss).
+        message_id: Refresh all attachments for a message (pass as string to avoid precision loss).
     """
     state: ServerState = ctx.request_context.lifespan_context
+
+    attachment_id = _parse_snowflake(attachment_id)
+    message_id = _parse_snowflake(message_id)
 
     if not attachment_id and not message_id:
         return json.dumps({"error": "Provide attachment_id or message_id"})
