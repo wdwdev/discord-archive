@@ -1,427 +1,140 @@
 # Discord Archive
 
-A Python-based tool for archiving Discord server data to PostgreSQL. Implements an ETL process that ingests guild metadata, channels, roles, messages, emojis, stickers, and scheduled events using Discord's REST API with support for both historical backfill and incremental synchronization.
-
-## Features
-
-- **Multi-account support** - Archive from multiple Discord accounts with selective guild archiving
-- **Full historical backfill** - Download all historical messages in a channel
-- **Incremental sync** - Fetch only new messages since last run
-- **Resumable operations** - Checkpoint system allows interruption and resumption
-- **Permission-aware** - Automatically skips inaccessible channels to avoid API errors
-- **Rate limit handling** - Respects Discord rate limits with automatic retry
-- **Thread support** - Archives public and private archived threads
-- **Rich logging** - Colored terminal output with progress tracking
+Archive Discord servers to PostgreSQL, build a semantic search index with NV-Embed-v2 + LanceDB, and explore them through an MCP retrieval agent or a 3D galaxy visualizer.
 
 ## Architecture
 
 ```mermaid
-graph TB
-    subgraph CLI["CLI Layer"]
-        A[python -m discord_archive.ingest]
+graph LR
+    subgraph Ingest
+        A[Discord API] -->|REST| B[IngestOrchestrator]
     end
 
-    subgraph Config["Configuration"]
-        B[config.json]
+    subgraph Storage
+        B --> C[(PostgreSQL)]
     end
 
-    subgraph Orchestration["Orchestration Layer"]
-        D[IngestOrchestrator]
-        E[GuildProcessor]
+    subgraph RAG Pipeline
+        C -->|messages| D[Chunking]
+        D -->|chunk_texts| E[NV-Embed-v2]
+        E -->|4096-dim vectors| F[(LanceDB)]
     end
 
-    subgraph Ingestion["Ingestion"]
-        F[ChannelFetcher]
-        G[EntityIngestor]
-        H[Backfill]
-        I[Incremental]
+    subgraph Agent
+        F --> G[MCP Server]
+        C --> G
+        G -->|stdio| H[Claude Code]
     end
 
-    subgraph API["Discord API Layer"]
-        J[DiscordClient]
+    subgraph Galaxy
+        F --> I[GPU PCA + UMAP]
+        I -->|3D coordinates| J[FastAPI]
+        C --> J
+        J --> K[React + Three.js]
     end
-
-    subgraph DB["Database Layer"]
-        K[Repositories]
-        L[ORM Models]
-        M[(PostgreSQL)]
-    end
-
-    A --> D
-    B --> D
-    D --> E
-    E --> F
-    E --> G
-    E --> H
-    E --> I
-    F --> J
-    G --> J
-    H --> J
-    I --> J
-    J -->|REST API| N[Discord]
-    H --> K
-    I --> K
-    G --> K
-    K --> L
-    L --> M
 ```
 
-## Data Flow
+Four layers, each runnable independently:
 
-```mermaid
-sequenceDiagram
-    participant CLI
-    participant Orchestrator
-    participant GuildProcessor
-    participant DiscordClient
-    participant Discord API
-    participant Repository
-    participant PostgreSQL
+| Layer | Entry point | Purpose |
+|-------|------------|---------|
+| **Ingest** | `python -m discord_archive.ingest` | Download Discord data to PostgreSQL |
+| **RAG** | `python -m discord_archive.rag.chunking` | Chunk messages, embed with NV-Embed-v2, store in LanceDB |
+| | `python -m discord_archive.rag.embedding` | |
+| **Retrieval** | via Claude Code (`.mcp.json`) | MCP server with semantic search + SQL tools |
+| **Galaxy** | `python -m discord_archive.rag.projection` | Project embeddings to 3D, serve via FastAPI + React |
+| | `python -m discord_archive.galaxy` | |
 
-    CLI->>Orchestrator: run(config)
-    loop For each account
-        Orchestrator->>GuildProcessor: process_guild(guild_id)
-        GuildProcessor->>DiscordClient: get_guild()
-        DiscordClient->>Discord API: GET /guilds/{id}
-        Discord API-->>DiscordClient: Guild JSON
-        DiscordClient-->>GuildProcessor: Guild data
-        GuildProcessor->>Repository: upsert_guild()
-        Repository->>PostgreSQL: INSERT/UPDATE
+## Setup
 
-        GuildProcessor->>DiscordClient: get_channels()
-        DiscordClient->>Discord API: GET /guilds/{id}/channels
-        Discord API-->>DiscordClient: Channels JSON
-
-        loop For each text channel
-            alt Backfill needed
-                GuildProcessor->>DiscordClient: get_messages(before=oldest_id)
-                DiscordClient->>Discord API: GET /channels/{id}/messages
-                Discord API-->>DiscordClient: Messages batch
-                GuildProcessor->>Repository: persist_messages_batch()
-                Repository->>PostgreSQL: Bulk INSERT
-            end
-
-            GuildProcessor->>DiscordClient: get_messages(after=newest_id)
-            DiscordClient->>Discord API: GET /channels/{id}/messages
-            Discord API-->>DiscordClient: New messages
-            GuildProcessor->>Repository: persist_messages_batch()
-            Repository->>PostgreSQL: Bulk INSERT
-        end
-    end
-    Orchestrator-->>CLI: Summary stats
-```
-
-## Installation
-
-**Requirements:**
-- Python >= 3.11
-- PostgreSQL database
+**Requirements:** Python >= 3.11, Docker
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/discord-archive.git
-cd discord-archive
+cp .env.example .env     # edit with your PostgreSQL credentials
+docker compose up -d     # start PostgreSQL
 
-# Install with uv (recommended)
-uv sync
-
-# Or install with pip
-pip install -e .
+uv sync                  # core only (ingest)
+uv sync --extra rag      # + RAG pipeline and MCP server
+uv sync --extra galaxy   # + 3D visualization
 ```
 
-## Configuration
+Copy `config.example.json` to `config.json` and fill in your database URL and Discord tokens.
 
-Create a `config.json` file (see `config.example.json` for reference):
+## Ingest
 
-```json
-{
-    "database_url": "postgresql+asyncpg://user:password@localhost:5432/discord_archive",
-    "accounts": [
-        {
-            "name": "MyAccount",
-            "token": "YOUR_DISCORD_TOKEN",
-            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "guilds": ["123456789012345678", "987654321098765432"]
-        }
-    ]
-}
-```
-
-### Configuration Options
-
-| Field | Description |
-|-------|-------------|
-| `database_url` | PostgreSQL connection string using asyncpg driver |
-| `accounts` | List of Discord account configurations |
-| `accounts[].name` | Account identifier for logging |
-| `accounts[].token` | Discord authorization token |
-| `accounts[].user_agent` | HTTP User-Agent header |
-| `accounts[].guilds` | List of guild IDs to archive (as strings) |
-
-## Usage
+Downloads guilds, channels, roles, messages, attachments, reactions, emojis, stickers, and scheduled events. Supports historical backfill and incremental sync with per-channel checkpoints.
 
 ```bash
-# Archive all configured guilds
-python -m discord_archive.ingest
-
-# Archive a specific guild
-python -m discord_archive.ingest --guild-id 123456789012345678
-
-# Archive a specific channel
-python -m discord_archive.ingest --channel-id 987654321098765432
-
-# Use a custom config file
-python -m discord_archive.ingest --config /path/to/config.json
-
-# Enable verbose logging
-python -m discord_archive.ingest --verbose
-
-# Enable debug logging (includes third-party libraries)
-python -m discord_archive.ingest --debug
-
-# Log to file
-python -m discord_archive.ingest --log-file archive.log
+python -m discord_archive.ingest                          # all configured guilds
+python -m discord_archive.ingest --guild-id 123           # specific guild
+python -m discord_archive.ingest --channel-id 456         # specific channel
+python -m discord_archive.ingest -v                       # verbose logging
 ```
 
-### CLI Options
+Rate limits are handled automatically (429 → wait, 5xx → exponential backoff, 403 → skip channel). Interrupted runs resume from checkpoint.
 
-| Option | Description |
-|--------|-------------|
-| `--config` | Path to config file (default: `config.json`) |
-| `--guild-id` | Process only the specified guild |
-| `--channel-id` | Process only the specified channel |
-| `-v, --verbose` | Enable DEBUG logging for the application |
-| `--debug` | Enable DEBUG logging including third-party libraries |
-| `--log-file` | Write logs to specified file |
+## RAG Pipeline
 
-## Database Schema
+Three-stage pipeline that turns messages into searchable vector embeddings:
 
-```mermaid
-erDiagram
-    Guild ||--o{ Channel : contains
-    Guild ||--o{ Role : contains
-    Guild ||--o{ Emoji : contains
-    Guild ||--o{ Sticker : contains
-    Guild ||--o{ GuildScheduledEvent : contains
-    Channel ||--o{ Message : contains
-    Channel ||--o| IngestCheckpoint : tracks
-    Message ||--o{ Attachment : contains
-    Message ||--o{ Reaction : contains
-    Message }o--o| User : references
+1. **Chunking** — Groups messages into semantic chunks using three strategies (sliding window, author group, reply chain). Token-aware boundaries.
 
-    Guild {
-        bigint guildId PK
-        string name
-        bigint ownerId
-        string icon
-        string description
-        int verificationLevel
-        int premiumTier
-        array features
-        jsonb raw
-        timestamp archivedAt
-    }
+2. **Embedding** — Encodes chunks with [NV-Embed-v2](https://huggingface.co/nvidia/NV-Embed-v2) (4096-dim, L2-normalized). Batched by token budget to maximize GPU throughput.
 
-    Channel {
-        bigint channelId PK
-        bigint guildId FK
-        bigint parentId FK
-        int type
-        string name
-        string topic
-        int position
-        bool nsfw
-        jsonb permissionOverwrites
-        jsonb threadMetadata
-        jsonb raw
-        timestamp archivedAt
-    }
+3. **Storage** — Vectors stored in LanceDB with metadata (guild, channel, authors, timestamps) for filtered ANN search.
 
-    Message {
-        bigint messageId PK
-        bigint channelId FK
-        bigint guildId
-        bigint authorId
-        string content
-        int type
-        int flags
-        bool pinned
-        timestamp createdAt
-        timestamp editedTimestamp
-        array mentions
-        array mentionRoles
-        jsonb embeds
-        jsonb components
-        jsonb poll
-        jsonb raw
-        timestamp archivedAt
-    }
-
-    User {
-        bigint userId PK
-        string username
-        string discriminator
-        string globalName
-        string avatar
-        bool bot
-        bool system
-        int publicFlags
-        jsonb raw
-        timestamp archivedAt
-    }
-
-    Role {
-        bigint roleId PK
-        bigint guildId FK
-        string name
-        int color
-        bool hoist
-        int position
-        decimal permissions
-        bool mentionable
-        bool managed
-        jsonb tags
-        jsonb raw
-        timestamp archivedAt
-    }
-
-    Attachment {
-        bigint attachmentId PK
-        bigint messageId FK
-        string filename
-        string contentType
-        bigint size
-        string url
-        int width
-        int height
-        float durationSecs
-        bool ephemeral
-        jsonb raw
-        timestamp archivedAt
-    }
-
-    Reaction {
-        bigint messageId PK
-        string emojiKey PK
-        bigint emojiId
-        string emojiName
-        bool emojiAnimated
-        int count
-        jsonb countDetails
-        jsonb raw
-        timestamp archivedAt
-    }
-
-    Emoji {
-        bigint emojiId PK
-        bigint guildId FK
-        string name
-        bool animated
-        bool available
-        bool managed
-        array roles
-        bigint userId
-        jsonb raw
-        timestamp archivedAt
-    }
-
-    Sticker {
-        bigint stickerId PK
-        bigint guildId FK
-        bigint packId
-        string name
-        string description
-        string tags
-        int type
-        int formatType
-        bool available
-        jsonb raw
-        timestamp archivedAt
-    }
-
-    GuildScheduledEvent {
-        bigint eventId PK
-        bigint guildId FK
-        bigint channelId
-        bigint creatorId
-        string name
-        string description
-        int entityType
-        int status
-        int privacyLevel
-        timestamp scheduledStartTime
-        timestamp scheduledEndTime
-        int userCount
-        jsonb entityMetadata
-        jsonb recurrenceRule
-        jsonb raw
-        timestamp archivedAt
-    }
-
-    IngestCheckpoint {
-        bigint channelId PK
-        bigint guildId
-        bigint oldestMessageId
-        bigint newestMessageId
-        bool backfillComplete
-        timestamp lastSyncedAt
-        timestamp createdAt
-    }
+```bash
+python -m discord_archive.rag.chunking                    # create chunks
+python -m discord_archive.rag.embedding                   # encode to vectors
 ```
 
-### Design Decisions
+Both commands accept `--guild-id` and `--channel-id` filters.
 
-- **Append-only messages** - Messages are never deleted or updated (except `edited_timestamp`)
-- **Latest-state snapshots** - Guild/channel/role metadata is overwritten on re-ingestion
-- **JSONB fields** - Embeds, components, and polls stored as JSONB for forward compatibility
-- **Checkpoint tracking** - Each channel tracks backfill progress for resumable operations
-- **Denormalized guild_id** - Messages include `guild_id` to avoid joins for guild-wide queries
+## Retrieval (MCP Server)
+
+A [FastMCP](https://github.com/jlowin/fastmcp) server that exposes the archive to Claude Code as three tools:
+
+| Tool | Description |
+|------|-------------|
+| `semantic_search` | Vector similarity search with filters (guild, channel, author, date range) |
+| `sql_query` | Read-only SQL against PostgreSQL (auto-appends LIMIT 500) |
+| `refresh_attachment_url` | Refresh expired Discord CDN signed URLs via Discord API |
+
+Registered in `.mcp.json` and auto-started by Claude Code. Lazy-loads the embedding model on first search.
+
+## Galaxy
+
+3D semantic visualization of the archive:
+
+1. **Projection** — GPU PCA (4096 → 200) then UMAP (200 → 3D). Exports per-guild binary point clouds.
+2. **Server** — FastAPI serving projection data, chunk details, and search API.
+3. **Frontend** — React + Three.js with custom GLSL shaders for point rendering and GPU picking.
+
+```bash
+python -m discord_archive.rag.projection                  # compute 3D coordinates
+python -m discord_archive.galaxy                          # start web server (port 8000)
+```
 
 ## Project Structure
 
 ```
 discord_archive/
-├── config/           # Configuration loading (Pydantic settings)
-├── core/             # Base orchestrator infrastructure
+├── config/              # Pydantic settings
+├── core/                # BaseOrchestrator
 ├── db/
-│   ├── models/       # SQLAlchemy ORM models
-│   └── repositories/ # Data access layer
-├── ingest/
-│   ├── __main__.py   # CLI entry point
-│   ├── run.py        # Main orchestration
-│   ├── guild_processor.py
-│   ├── backfill.py   # Historical message fetching
-│   ├── incremental.py # New message sync
-│   ├── channel_fetcher.py
-│   ├── client.py     # Discord REST API client
-│   ├── entity_ingestor.py
-│   ├── mappers/      # JSON to ORM mappers
-│   └── state.py      # Checkpoint management
-└── utils/
-    ├── permissions.py # Discord permission calculations
-    ├── snowflake.py   # Discord ID utilities
-    └── time.py        # Timestamp parsing
-```
-
-## Error Handling
-
-| Scenario | Behavior |
-|----------|----------|
-| Rate limit (429) | Wait for `Retry-After` duration, then retry |
-| Server error (5xx) | Exponential backoff (1s to 64s), max 5 retries |
-| Forbidden (403) | Skip channel, continue to next |
-| Process crash | Resume from checkpoint on restart |
-
-## Development
-
-```bash
-# Install with test dependencies
-uv sync --extra test
-
-# Run tests
-pytest
+│   ├── models/          # SQLAlchemy ORM (15 tables)
+│   └── repositories/    # Data access layer
+├── ingest/              # Discord API → PostgreSQL
+├── rag/
+│   ├── chunking/        # Messages → semantic chunks
+│   ├── embedding/       # NV-Embed-v2 + LanceDB
+│   ├── projection/      # GPU PCA + UMAP → 3D
+│   └── retrieval/       # MCP server
+├── galaxy/              # FastAPI web server
+└── utils/               # Snowflake, permissions, logging
+web/                     # React + Three.js frontend
 ```
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT

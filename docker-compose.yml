@@ -1,0 +1,12 @@
+services:
+  postgres:
+    image: postgres:18
+    container_name: discord-archive-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    env_file: .env
+    environment:
+      POSTGRES_DB: discord_archive
+    volumes:
+      - ./data/postgres:/var/lib/postgresql
